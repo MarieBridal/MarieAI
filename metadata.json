@@ -1,0 +1,7 @@
+{
+  "name": "MARIE AI",
+  "description": "A professional-grade AI image studio for advanced image editing, upscaling to 4K, and interactive visual analysis using Gemini 3 Pro and Flash models.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
