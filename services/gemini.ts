@@ -234,6 +234,24 @@ async function prepareImageForAi(
   });
 }
 
+async function resizeImageToMatch(base64: string, targetW: number, targetH: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, targetW, targetH);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => reject(new Error('Resize failed'));
+    img.src = base64;
+  });
+}
+
 export class GeminiService {
   private getClient() {
     let key = process.env.API_KEY;
@@ -386,7 +404,9 @@ CRITICAL: Do not alter the outline, position, or structure of anything. Output o
         config: { imageConfig: { aspectRatio: aspectRatio as any, imageSize: '2K' as any } }
       }));
       const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      return imagePart?.inlineData ? `data:image/png;base64,${imagePart.inlineData.data}` : undefined;
+      if (!imagePart?.inlineData) return undefined;
+      // Resize to exactly match the original image dimensions
+      return await resizeImageToMatch(`data:image/png;base64,${imagePart.inlineData.data}`, img.width, img.height);
     } catch (error: any) {
       if (error.message?.includes('403') || error.message?.includes('Requested entity was not found.')) {
         await openKeySelector();
@@ -426,7 +446,9 @@ Do not add any text or borders. Output purely a monochrome depth layer matching 
         config: { imageConfig: { aspectRatio: aspectRatio as any, imageSize: '2K' as any } }
       }));
       const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      return imagePart?.inlineData ? `data:image/png;base64,${imagePart.inlineData.data}` : undefined;
+      if (!imagePart?.inlineData) return undefined;
+      // Resize to exactly match the original image dimensions
+      return await resizeImageToMatch(`data:image/png;base64,${imagePart.inlineData.data}`, img.width, img.height);
     } catch (error: any) {
       if (error.message?.includes('403') || error.message?.includes('Requested entity was not found.')) {
         await openKeySelector();
