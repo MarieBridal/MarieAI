@@ -3,9 +3,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { gemini, optimizeReferenceImage, applyLocalNoise, NoiseProfile, ImageQuality } from '../services/gemini';
-import { clipImageWithMask } from '../utils/imageProcessor';
-import { PsdLayerParams, createMultiLayerPsdBlob } from '../services/psdExport';
-import { toast } from 'sonner';
 
 interface BulkItem {
   id: string;
@@ -225,80 +222,23 @@ export const BulkGenerator: React.FC = () => {
     }));
   };
 
-  const downloadSingle = async (item: BulkItem, asPsd: boolean = false) => {
+  const downloadSingle = (item: BulkItem) => {
     if (item.selectedResultIndex < 0) return;
-
-    if (!asPsd) {
-      const link = document.createElement('a');
-      link.href = item.results[item.selectedResultIndex];
-      link.download = `MARIE_BULK_${item.id}_v${item.selectedResultIndex}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
-    }
-
-    // Export as PSD with Mask Isolation
-    const layers: PsdLayerParams[] = [];
-    layers.push({ name: 'Original', base64: item.original });
-
-    const aiResult = item.results[item.selectedResultIndex];
-    if (item.mask) {
-      try {
-        const img = new Image();
-        img.src = item.original;
-        await new Promise(r => img.onload = r);
-        const clipped = await clipImageWithMask(aiResult, item.mask, img.width, img.height);
-        layers.push({ name: 'AI Result (Isolated)', base64: clipped });
-      } catch (e) {
-        layers.push({ name: 'AI Result', base64: aiResult });
-      }
-    } else {
-      layers.push({ name: 'AI Result', base64: aiResult });
-    }
-
-    try {
-      const blob = await createMultiLayerPsdBlob(layers);
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `MARIE_BULK_${item.id}.psd`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to generate PSD");
-    }
+    const link = document.createElement('a');
+    link.href = item.results[item.selectedResultIndex];
+    link.download = `MARIE_BULK_${item.id}_v${item.selectedResultIndex}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
-  const downloadAll = async (asPsd: boolean = false) => {
+  const downloadAll = async () => {
     const completedItems = items.filter(it => it.results.length > 0 && it.status === 'completed');
     if (completedItems.length === 0) return;
-
-    if (!asPsd) {
-      for (const item of completedItems) {
-        await downloadSingle(item, false);
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return;
+    for (const item of completedItems) {
+      downloadSingle(item);
+      await new Promise(r => setTimeout(r, 400));
     }
-
-    const promise = (async () => {
-      let count = 0;
-      for (const item of completedItems) {
-        await downloadSingle(item, true);
-        count++;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return count;
-    })();
-
-    toast.promise(promise, {
-      loading: `Gói ${completedItems.length} file PSD...`,
-      success: (c) => `Tải thành công ${c} file PSD!`,
-      error: 'Lỗi tải PSD hàng loạt'
-    });
   };
 
   const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -537,15 +477,9 @@ export const BulkGenerator: React.FC = () => {
               <button disabled={processing || items.length === 0} onClick={handleStartBatch} className="bg-blue-600 text-white font-black py-4 rounded-xl text-[9px] uppercase shadow-xl disabled:opacity-50 transition-all hover:bg-blue-500">
                 {processing ? <i className="fa-solid fa-spinner animate-spin"></i> : <i className="fa-solid fa-play"></i>} Chạy Batch
               </button>
-              <div className="flex bg-cyan-900/40 rounded-xl overflow-hidden shadow-xl border border-cyan-500/30">
-                <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={() => downloadAll(false)} className="flex-1 text-cyan-400 font-black py-4 text-[9px] uppercase disabled:opacity-50 transition-all hover:bg-cyan-500/20">
-                  <i className="fa-solid fa-download"></i> Tải Ảnh
-                </button>
-                <div className="w-px bg-cyan-500/30"></div>
-                <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={() => downloadAll(true)} className="flex-1 text-blue-400 font-black py-4 text-[9px] uppercase disabled:opacity-50 transition-all hover:bg-blue-500/20">
-                  <i className="fa-solid fa-layer-group"></i> Tải PSD
-                </button>
-              </div>
+              <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={downloadAll} className="bg-cyan-600 text-white font-black py-4 rounded-xl text-[9px] uppercase shadow-xl disabled:opacity-50 transition-all hover:bg-cyan-500">
+                <i className="fa-solid fa-download"></i> Tải Tất Cả
+              </button>
             </div>
           </div>
         </div>
@@ -563,10 +497,7 @@ export const BulkGenerator: React.FC = () => {
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 px-2">
                   <button onClick={(e) => { e.stopPropagation(); setEditingItem(item); }} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shadow-lg"><i className="fa-solid fa-paintbrush text-[11px]"></i></button>
                   {item.results.length > 0 && (
-                    <>
-                      <button onClick={(e) => { e.stopPropagation(); downloadSingle(item, false); }} className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center shadow-lg hover:bg-cyan-400 transition-colors" title="Tải ảnh PNG"><i className="fa-solid fa-download text-[11px]"></i></button>
-                      <button onClick={(e) => { e.stopPropagation(); downloadSingle(item, true); }} className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg hover:bg-blue-500 transition-colors" title="Tải ảnh PSD (Tách Layer AI)"><i className="fa-solid fa-layer-group text-[11px]"></i></button>
-                    </>
+                    <button onClick={(e) => { e.stopPropagation(); downloadSingle(item); }} className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center shadow-lg"><i className="fa-solid fa-download text-[11px]"></i></button>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); processSingleItem(idx, 0, `RETRY_${Date.now()}`); }} className="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-lg"><i className="fa-solid fa-rotate-right text-[11px]"></i></button>
                 </div>

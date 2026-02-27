@@ -10,8 +10,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../utils';
 import { createMultiLayerPsdBlob, PsdLayerParams } from '../services/psdExport';
-import { applyColorMatch, extractColorAdjustments, ColorAdjustments } from '../utils/colorMatch';
-import { clipImageWithMask, extractMasksFromMap, SemanticMasks } from '../utils/imageProcessor';
+import { applyColorMatch } from '../utils/colorMatch';
+import { clipImageWithMask } from '../utils/imageProcessor';
 
 interface PaintItem {
   id: string;
@@ -28,10 +28,6 @@ interface PaintItem {
   maskDilation: number;
   isProcessing?: boolean;
   detectedTexts?: TextNode[];
-  colorAdjustments?: ColorAdjustments;
-  baseColorAdjustments?: ColorAdjustments;
-  semanticMasks?: SemanticMasks;
-  depthMap?: string;
 }
 
 interface MariePaintProps {
@@ -90,24 +86,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     return () => window.removeEventListener('pointermove', handleMove);
   }, [canvasActive, isHovering, activeItem?.selectedResultIndex, isSpacePressed]);
   const currentImage = activeItem ? (activeItem.selectedResultIndex >= 0 ? activeItem.results[activeItem.selectedResultIndex] : activeItem.original) : null;
-
-  // Calculate CSS Filter Delta for live slider preview
-  let dynamicFilterStyle = '';
-  if (activeItem?.colorAdjustments && activeItem?.baseColorAdjustments && activeItem.selectedResultIndex !== -1 && !showOriginal) {
-    const adj = activeItem.colorAdjustments;
-    const base = activeItem.baseColorAdjustments;
-    const dExp = adj.exposure - base.exposure;
-    const dCont = adj.contrast - base.contrast;
-    const dSat = adj.saturation - base.saturation;
-    const dTemp = adj.temperature - base.temperature;
-
-    const brightness = 100 + (dExp / 1.5);
-    const contrast = 100 + dCont;
-    const saturate = 100 + dSat;
-    const hue = dTemp * 0.5;
-
-    dynamicFilterStyle = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturate}%) hue-rotate(${hue}deg)`;
-  }
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -511,13 +489,9 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     }
     setLoading(true);
     try {
-      toast.info("Đang hút màu từ ảnh mẫu và phân tích dữ liệu ảnh (Histogram)...");
+      toast.info("Đang hút màu từ ảnh mẫu và mô phỏng Histogram 100%...");
       const currentImage = activeItem.selectedResultIndex !== -1 ? activeItem.results[activeItem.selectedResultIndex] : activeItem.original;
-
-      const [matchedB64, adjustments] = await Promise.all([
-        applyColorMatch(currentImage, refImage),
-        extractColorAdjustments(currentImage, refImage)
-      ]);
+      const matchedB64 = await applyColorMatch(currentImage, refImage);
 
       const newResults = [...activeItem.results, matchedB64];
       const newRawResults = [...activeItem.rawResults, matchedB64];
@@ -525,9 +499,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
         ...it,
         results: newResults,
         rawResults: newRawResults,
-        selectedResultIndex: newResults.length - 1,
-        colorAdjustments: { ...adjustments },
-        baseColorAdjustments: { ...adjustments }
+        selectedResultIndex: newResults.length - 1
       } : it));
 
       toast.success("Ép màu Evoto Style hoàn tất!");
@@ -536,79 +508,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleExtractMasks = async () => {
-    if (!activeItem) return;
-    setLoading(true);
-    try {
-      toast.info("Đang phân tích cấu trúc không gian 3D ảnh...");
-      const currentImage = activeItem.selectedResultIndex !== -1 ? activeItem.results[activeItem.selectedResultIndex] : activeItem.original;
-
-      const rgbMapB64 = await gemini.generateSemanticMask(currentImage);
-      if (rgbMapB64) {
-        // Find natural dimensions
-        const img = new Image();
-        img.src = currentImage;
-        await new Promise(r => img.onload = r);
-
-        const masks = await extractMasksFromMap(rgbMapB64, img.width, img.height);
-
-        setItems(prev => prev.map(it => it.id === activeItem.id ? {
-          ...it, semanticMasks: masks
-        } : it));
-        toast.success("Tách mask đa vùng thành công!");
-      }
-    } catch (err: any) {
-      toast.error(`Lỗi tách mask: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleExtractDepthMap = async () => {
-    if (!activeItem) return;
-    setLoading(true);
-    try {
-      toast.info("Đang giả lập bản đồ chiều sâu 3D (Z-Depth)...");
-      const currentImage = activeItem.selectedResultIndex !== -1 ? activeItem.results[activeItem.selectedResultIndex] : activeItem.original;
-
-      const depthData = await gemini.generateDepthMap(currentImage);
-      if (depthData) {
-        setItems(prev => prev.map(it => it.id === activeItem.id ? {
-          ...it, depthMap: depthData
-        } : it));
-        toast.success("Khởi tạo Depth Map thành công!");
-      }
-    } catch (err: any) {
-      toast.error(`Lỗi tạo Depth Map: ${err.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getAdjustmentLayers = (adj: ColorAdjustments): PsdLayerParams[] => {
-    return [
-      {
-        name: 'Chỉnh Sáng/Tối (Smart Color)',
-        adjustment: { type: 'brightness/contrast', brightness: adj.exposure, contrast: adj.contrast }
-      },
-      {
-        name: 'Cân Bằng Màu (Smart Color)',
-        adjustment: {
-          type: 'color balance',
-          midtones: { cyanRed: 0, magentaGreen: adj.tint, yellowBlue: adj.temperature },
-          preserveLuminosity: true
-        }
-      },
-      {
-        name: 'Độ Bão Hòa (Smart Color)',
-        adjustment: {
-          type: 'hue/saturation',
-          master: { a: 0, b: 0, c: 0, d: 0, hue: 0, saturation: adj.saturation, lightness: adj.lightness }
-        }
-      }
-    ];
   };
 
   const downloadSingle = async (item: PaintItem, format: 'psd' | 'png') => {
@@ -649,20 +548,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       } else {
         layers.push({ name: 'AI Result', base64: aiResult });
       }
-    }
-
-    if (item.depthMap) {
-      layers.push({ name: 'Depth Map (Hidden)', base64: item.depthMap });
-    }
-
-    if (item.semanticMasks) {
-      layers.push({ name: 'Mask - Da Mặt (Hidden)', base64: item.semanticMasks.skin });
-      layers.push({ name: 'Mask - Phông Nền (Hidden)', base64: item.semanticMasks.background });
-      layers.push({ name: 'Mask - Chủ Thể (Hidden)', base64: item.semanticMasks.subject });
-    }
-
-    if (item.colorAdjustments) {
-      layers.push(...getAdjustmentLayers(item.colorAdjustments));
     }
 
     const promise = createMultiLayerPsdBlob(layers, item.detectedTexts).then(blob => {
@@ -728,20 +613,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
           } else {
             layers.push({ name: 'AI Result', base64: aiResult });
           }
-        }
-
-        if (item.depthMap) {
-          layers.push({ name: 'Depth Map (Hidden)', base64: item.depthMap });
-        }
-
-        if (item.semanticMasks) {
-          layers.push({ name: 'Mask - Da Mặt (Hidden)', base64: item.semanticMasks.skin });
-          layers.push({ name: 'Mask - Phông Nền (Hidden)', base64: item.semanticMasks.background });
-          layers.push({ name: 'Mask - Chủ Thể (Hidden)', base64: item.semanticMasks.subject });
-        }
-
-        if (item.colorAdjustments) {
-          layers.push(...getAdjustmentLayers(item.colorAdjustments));
         }
 
         const blob = await createMultiLayerPsdBlob(layers, item.detectedTexts);
@@ -912,54 +783,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
             </div>
           </div>
 
-          {activeItem?.colorAdjustments && (
-            <div className="p-4 bg-slate-900/80 rounded-2xl border border-pink-500/30 space-y-4">
-              <div className="flex justify-between items-center text-[10px] font-black text-pink-400 uppercase tracking-widest">
-                <span>SMART COLOR (EVOTO)</span>
-                <Wand2 className="w-3.5 h-3.5" />
-              </div>
-
-              {[
-                { label: 'Exposure', key: 'exposure' as keyof ColorAdjustments, min: -150, max: 150 },
-                { label: 'Contrast', key: 'contrast' as keyof ColorAdjustments, min: -50, max: 100 },
-                { label: 'Temperature', key: 'temperature' as keyof ColorAdjustments, min: -100, max: 100 },
-                { label: 'Tint', key: 'tint' as keyof ColorAdjustments, min: -100, max: 100 },
-                { label: 'Saturation', key: 'saturation' as keyof ColorAdjustments, min: -100, max: 100 },
-                { label: 'Lightness', key: 'lightness' as keyof ColorAdjustments, min: -100, max: 100 },
-              ].map(slider => {
-                const value = activeItem.colorAdjustments![slider.key];
-                return (
-                  <div key={slider.key} className="space-y-1">
-                    <div className="flex justify-between items-center text-[9px] font-black uppercase">
-                      <span className="text-slate-400">{slider.label}</span>
-                      <span className={value !== 0 ? 'text-pink-400' : 'text-slate-600'}>{value > 0 ? `+${value}` : value}</span>
-                    </div>
-                    <input
-                      type="range" min={slider.min} max={slider.max} value={value}
-                      onChange={(e) => {
-                        const val = parseInt(e.target.value);
-                        setItems(prev => prev.map(it => it.id === activeItem.id ? {
-                          ...it,
-                          colorAdjustments: { ...it.colorAdjustments!, [slider.key]: val }
-                        } : it));
-                      }}
-                      onDoubleClick={() => {
-                        // Double click resets to base AI analysis
-                        const baseVal = activeItem.baseColorAdjustments![slider.key];
-                        setItems(prev => prev.map(it => it.id === activeItem.id ? {
-                          ...it,
-                          colorAdjustments: { ...it.colorAdjustments!, [slider.key]: baseVal }
-                        } : it));
-                      }}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg accent-pink-500 cursor-pointer"
-                    />
-                  </div>
-                );
-              })}
-              <p className="text-[7px] text-slate-500 uppercase mt-2">Thông số màu phân tích từ ảnh gốc. Khi tải PSD, các thông số này sẽ tự xuất thành Layer Adjustment của Photoshop.</p>
-            </div>
-          )}
-
           <div className="p-4 bg-slate-900/60 rounded-2xl border border-slate-800 space-y-4">
             <div className="flex justify-between items-center text-[9px] font-black text-slate-500 uppercase"><span>Noise Engine</span><span className="text-blue-400 uppercase">{noiseProfile.toUpperCase()}</span></div>
             <div className="flex gap-1 p-1 bg-slate-950 rounded-lg border border-slate-800">
@@ -1007,37 +830,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
               <button onClick={extractTypography} disabled={loading || !activeItem} className="py-3 bg-fuchsia-900/20 border border-fuchsia-500/30 rounded-xl text-[9px] font-black text-fuchsia-400 uppercase hover:bg-fuchsia-500/30 transition-all flex items-center justify-center gap-2"><Type className="w-3.5 h-3.5" /> Quét Chữ (Typos)</button>
               <button onClick={() => { setItems([]); setCurrentIndex(-1); }} className="py-3 bg-red-900/10 border border-red-500/20 rounded-xl text-[9px] font-black text-red-500/80 uppercase hover:bg-red-500/20 hover:text-red-500 transition-all flex items-center justify-center gap-2"><Trash2 className="w-3.5 h-3.5" /> Xóa toàn bộ</button>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <button onClick={handleExtractMasks} disabled={loading || !activeItem} className="py-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl text-[9px] font-black text-emerald-400 uppercase hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2"><Wand2 className="w-3.5 h-3.5" /> Tách Mask (AI)</button>
-              <button onClick={handleExtractDepthMap} disabled={loading || !activeItem} className="py-3 bg-cyan-900/20 border border-cyan-500/30 rounded-xl text-[9px] font-black text-cyan-400 uppercase hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-2"><Layers className="w-3.5 h-3.5" /> Tách 3D Depth</button>
-            </div>
-
-            {(activeItem?.semanticMasks || activeItem?.depthMap) && (
-              <div className="mt-4 p-3 bg-slate-900/80 rounded-xl border border-slate-700 space-y-3">
-                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Dữ Liệu Phân Tích (Sẽ Lưu Vào PSD)</h4>
-
-                {activeItem?.semanticMasks && (
-                  <div className="space-y-1">
-                    <span className="text-[8px] font-bold text-emerald-500 uppercase">Semantic Masks (Chủ thể / Nền / Da)</span>
-                    <div className="grid grid-cols-3 gap-1">
-                      <img src={activeItem.semanticMasks.subject} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Chủ Thể" />
-                      <img src={activeItem.semanticMasks.background} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Phông Nền" />
-                      <img src={activeItem.semanticMasks.skin} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Da Mặt" />
-                    </div>
-                  </div>
-                )}
-
-                {activeItem?.depthMap && (
-                  <div className="space-y-1">
-                    <span className="text-[8px] font-bold text-cyan-500 uppercase">3D Depth Map</span>
-                    <div className="w-full h-20 rounded bg-black border border-slate-700 overflow-hidden">
-                      <img src={activeItem.depthMap} className="w-full h-full object-cover" title="Z-Depth Map" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {activeItem && activeItem.results.length > 0 && (
@@ -1055,7 +847,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
         <div ref={containerRef} onMouseDown={e => { if (e.button === 1 || isSpacePressed || activeItem?.selectedResultIndex !== -1) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }} onMouseMove={e => { if (isPanning) { setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }) } }} onMouseUp={() => setIsPanning(false)} onMouseEnter={() => setIsHovering(true)} onMouseLeave={() => setIsHovering(false)} className={`flex-1 glass-effect rounded-[3rem] relative overflow-hidden flex flex-col items-center justify-center border border-slate-700 bg-slate-950/40 min-h-[500px] shadow-inner ${canvasActive && activeItem?.selectedResultIndex === -1 && !isSpacePressed ? 'cursor-none' : 'cursor-default'}`}>
           {currentImage ? (
             <div style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`, transition: isPanning || isDrawing ? 'none' : 'transform 0.15s' }} className="relative inline-block rounded-2xl bg-black shadow-[0_50px_100px_rgba(0,0,0,0.8)]">
-              <img ref={imageRef} style={{ filter: dynamicFilterStyle }} src={showOriginal ? activeItem?.original : currentImage} className="max-h-[75vh] w-auto block select-none pointer-events-none rounded-2xl transition-all duration-75" />
+              <img ref={imageRef} src={showOriginal ? activeItem?.original : currentImage} className="max-h-[75vh] w-auto block select-none pointer-events-none rounded-2xl" />
               <canvas ref={displayCanvasRef} onPointerDown={startDrawing} onPointerMove={draw} onPointerUp={stopDrawing} className={`absolute inset-0 z-10 w-full h-full rounded-2xl touch-none ${canvasActive && activeItem?.selectedResultIndex === -1 ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} />
               <canvas ref={maskCanvasRef} className="hidden" />
 

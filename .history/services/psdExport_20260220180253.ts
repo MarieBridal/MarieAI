@@ -1,10 +1,9 @@
-import { writePsd, BrightnessAdjustment, ColorBalanceAdjustment, HueSaturationAdjustment } from 'ag-psd';
+import { writePsd } from 'ag-psd';
 import { TextNode } from './gemini';
 
 export interface PsdLayerParams {
     name: string;
-    base64?: string;
-    adjustment?: BrightnessAdjustment | ColorBalanceAdjustment | HueSaturationAdjustment;
+    base64: string;
 }
 
 const base64ToCanvas = (base64: string, targetWidth: number, targetHeight: number): Promise<HTMLCanvasElement> => {
@@ -47,9 +46,7 @@ export const createMultiLayerPsdBlob = async (layers: PsdLayerParams[], textNode
     try {
         // Determine the base canvas size from the first valid AI result layer (usually the topmost one is processed)
         // or just the very first layer in the list.
-        const firstVisualLayer = layers.find(l => l.base64);
-        if (!firstVisualLayer) throw new Error("No visual layers provided to generate PSD.");
-        const dimensions = await getCanvasDimensions(firstVisualLayer.base64!);
+        const dimensions = await getCanvasDimensions(layers[0].base64);
         const { width, height } = dimensions;
 
         // Create PSD JSON Structure for ag-psd
@@ -61,18 +58,11 @@ export const createMultiLayerPsdBlob = async (layers: PsdLayerParams[], textNode
         // The PSD `children` array should be [bg, original, aiResult] in that exact order to stack correctly from bottom to top.
 
         for (const layer of layers) {
-            if (layer.adjustment) {
-                psdChildren.push({
-                    name: layer.name,
-                    adjustment: layer.adjustment
-                });
-            } else if (layer.base64) {
-                const canvas = await base64ToCanvas(layer.base64, width, height);
-                psdChildren.push({
-                    name: layer.name,
-                    canvas: canvas,
-                });
-            }
+            const canvas = await base64ToCanvas(layer.base64, width, height);
+            psdChildren.push({
+                name: layer.name,
+                canvas: canvas,
+            });
         }
 
         // Add text nodes as individual PSD text layers on top

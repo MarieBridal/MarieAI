@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { Undo, Redo, Trash2 } from 'lucide-react';
 import { gemini, optimizeReferenceImage, applyLocalNoise, NoiseProfile, ImageQuality, getNearestGeminiRatio } from '../services/gemini';
 
@@ -29,6 +28,7 @@ export const Editor: React.FC = () => {
   const [showOriginal, setShowOriginal] = useState(false);
   const [canvasActive, setCanvasActive] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
   const [isDraggingMain, setIsDraggingMain] = useState(false);
@@ -49,19 +49,8 @@ export const Editor: React.FC = () => {
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const cursorRef = useRef<HTMLDivElement>(null);
 
   const currentResult = selectedResultIndex >= 0 ? results[selectedResultIndex] : null;
-
-  useEffect(() => {
-    const handleMove = (e: PointerEvent) => {
-      if (cursorRef.current && canvasActive && isHovering && !currentResult && !isSpacePressed) {
-        cursorRef.current.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
-      }
-    };
-    window.addEventListener('pointermove', handleMove);
-    return () => window.removeEventListener('pointermove', handleMove);
-  }, [canvasActive, isHovering, currentResult, isSpacePressed]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -240,6 +229,7 @@ export const Editor: React.FC = () => {
   };
 
   const handleContainerMouseMove = (e: React.MouseEvent) => {
+    setMousePos({ x: e.clientX, y: e.clientY });
     if (isPanning) setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
   };
 
@@ -274,6 +264,7 @@ export const Editor: React.FC = () => {
   };
 
   const draw = (e: React.PointerEvent) => {
+    setMousePos({ x: e.clientX, y: e.clientY });
     if (!isDrawing || isSpacePressed) return;
 
     const rect = displayCanvasRef.current!.getBoundingClientRect();
@@ -352,9 +343,8 @@ export const Editor: React.FC = () => {
 
   return (
     <div className="flex flex-col lg:flex-row gap-8 p-6 animate-fadeIn max-w-[1800px] mx-auto h-full min-h-[calc(100vh-140px)]">
-      {canvasActive && isHovering && !currentResult && !loading && !isSpacePressed && typeof document !== 'undefined' && createPortal(
-        <div ref={cursorRef} style={{ position: 'fixed', left: 0, top: 0, width: brushSize, height: brushSize, border: isEraser ? '2px solid rgba(255, 0, 0, 0.8)' : '2px solid white', backgroundColor: isEraser ? 'transparent' : 'rgba(255, 0, 0, 0.4)', pointerEvents: 'none', zIndex: 999999, borderRadius: '50%' }} />,
-        document.body
+      {canvasActive && isHovering && !currentResult && !loading && !isSpacePressed && (
+        <div style={{ position: 'fixed', left: mousePos.x, top: mousePos.y, width: brushSize, height: brushSize, transform: 'translate(-50%, -50%)', border: '2px solid white', backgroundColor: 'rgba(255, 0, 0, 0.4)', pointerEvents: 'none', zIndex: 9999, borderRadius: '50%' }} />
       )}
 
       <div className="w-full lg:w-96 flex flex-col gap-6 flex-shrink-0">

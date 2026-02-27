@@ -310,13 +310,9 @@ export class GeminiService {
 
     if (bgB64) {
       systemInstruction += `\n\n    SPECIAL MISSION (BACKGROUND COMPOSITING): 
-      You MUST extract the main subject from the SOURCE_TEMPLATE and flawlessly composite it onto the BACKGROUND_ENVIRONMENT.
-      
-      CRITICAL COMPOSITING CONSTRAINTS:
-      - [EXACT PIXEL SUBJECT EXTRACTION]: You MUST NOT alter, hallucinate, redraw, or modify the anatomy, face, clothes, shape, texture, or identity of the original subject in the SOURCE_TEMPLATE in ANY WAY. Preserve 100% of the subject's original pixels.
-      - [ULTRA-REALISTIC BLENDING]: Generate physically accurate CAST SHADOWS onto the floor/surfaces of the BACKGROUND_ENVIRONMENT. Create matched AMBIENT OCCLUSION and LIGHT REFLECTIONS on the subject so it perfectly matches the lighting situation of the new background.
-      - [ZERO HALLUCINATION]: DO NOT invent, hallucinate, or add any other subjects, animals, humans, or objects that are not already present in the SOURCE_TEMPLATE or BACKGROUND_ENVIRONMENT.
-      - OVERALL GOAL: Make it look like a 100% real photograph where the exact original subject was actually physically present in the new background environment.`;
+      You MUST extract the main subject from the SOURCE_TEMPLATE and flawlessly composite it onto the BACKGROUND_ENVIRONMENT. 
+      Generate physically accurate shadows, ambient occlusion, reflections, and lighting on the subject that matches the BACKGROUND_ENVIRONMENT perfectly. 
+      DO NOT hallucinate other subjects. ONLY composite the main subject onto the new background.`;
     }
 
     const parts: any[] = [];
@@ -344,86 +340,6 @@ export class GeminiService {
         model: 'gemini-3-pro-image-preview',
         contents: { parts },
         config: { systemInstruction, seed: dynamicSeed, imageConfig: { aspectRatio: aspectRatio as any, imageSize: apiQuality as any } }
-      }));
-      const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      return imagePart?.inlineData ? `data:image/png;base64,${imagePart.inlineData.data}` : undefined;
-    } catch (error: any) {
-      if (error.message?.includes('403') || error.message?.includes('Requested entity was not found.')) {
-        await openKeySelector();
-      }
-      throw error;
-    }
-  }
-
-  async generateSemanticMask(imageB64: string): Promise<string | undefined> {
-    const ai = this.getClient();
-
-    // Determine aspect ratio
-    const img = new Image();
-    img.src = imageB64.startsWith('data:') ? imageB64 : `data:image/png;base64,${imageB64}`;
-    await new Promise(r => img.onload = r);
-    const aspectRatio = getNearestGeminiRatio(img.width, img.height);
-
-    const { data: targetData } = await prepareImageForAi(imageB64, 1536, 0.8);
-
-    const parts = [
-      { text: "SOURCE_IMAGE:" },
-      { inlineData: { data: targetData, mimeType: 'image/jpeg' } },
-      {
-        text: `[SPECIAL MISSION: EXACT SEMANTIC SEGMENTATION] 
-Generate a pixel-perfect color-coded semantic map based strictly on the SOURCE_IMAGE geometry.
-COLOR CODING RULES:
-1. Paint the Main Subject (entire body, clothing, hair) in PURE RED (#FF0000).
-2. Paint all Background Environment in PURE GREEN (#00FF00).
-3. If the subject is human, paint exposed Skin/Face in PURE BLUE (#0000FF).
-CRITICAL: Do not alter the outline, position, or structure of anything. Output only flat colors perfectly tracing the original image.` }
-    ];
-
-    try {
-      const response = await this.withRetry(() => ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: aspectRatio as any, imageSize: '2K' as any } }
-      }));
-      const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-      return imagePart?.inlineData ? `data:image/png;base64,${imagePart.inlineData.data}` : undefined;
-    } catch (error: any) {
-      if (error.message?.includes('403') || error.message?.includes('Requested entity was not found.')) {
-        await openKeySelector();
-      }
-      throw error;
-    }
-  }
-
-  async generateDepthMap(imageB64: string): Promise<string | undefined> {
-    const ai = this.getClient();
-
-    const img = new Image();
-    img.src = imageB64.startsWith('data:') ? imageB64 : `data:image/png;base64,${imageB64}`;
-    await new Promise(r => img.onload = r);
-    const aspectRatio = getNearestGeminiRatio(img.width, img.height);
-
-    const { data: targetData } = await prepareImageForAi(imageB64, 1536, 0.8);
-
-    const parts = [
-      { text: "SOURCE_IMAGE:" },
-      { inlineData: { data: targetData, mimeType: 'image/jpeg' } },
-      {
-        text: `[SPECIAL MISSION: 3D Z-DEPTH MAP ESTIMATION] 
-Generate a high-precision, smooth grayscale Depth Map derived perfectly from the perspective of the SOURCE_IMAGE.
-RULES:
-1. Pure White (#FFFFFF) represents objects closest to the camera.
-2. Pure Black (#000000) represents the furthest background or infinity.
-3. Use smooth gradients of gray (0-255) to represent intermediate distances seamlessly.
-4. Preserve the exact edges and silhouettes of objects.
-Do not add any text or borders. Output purely a monochrome depth layer matching the original layout.` }
-    ];
-
-    try {
-      const response = await this.withRetry(() => ai.models.generateContent({
-        model: 'gemini-3-pro-image-preview',
-        contents: { parts },
-        config: { imageConfig: { aspectRatio: aspectRatio as any, imageSize: '2K' as any } }
       }));
       const imagePart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
       return imagePart?.inlineData ? `data:image/png;base64,${imagePart.inlineData.data}` : undefined;

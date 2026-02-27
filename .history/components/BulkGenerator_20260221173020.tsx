@@ -1,11 +1,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import React from 'react';
-import { createPortal } from 'react-dom';
 import { gemini, optimizeReferenceImage, applyLocalNoise, NoiseProfile, ImageQuality } from '../services/gemini';
-import { clipImageWithMask } from '../utils/imageProcessor';
-import { PsdLayerParams, createMultiLayerPsdBlob } from '../services/psdExport';
-import { toast } from 'sonner';
 
 interface BulkItem {
   id: string;
@@ -48,6 +44,7 @@ export const BulkGenerator: React.FC = () => {
   const [isEraser, setIsEraser] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isHoveringModal, setIsHoveringModal] = useState(false);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -60,17 +57,6 @@ export const BulkGenerator: React.FC = () => {
 
   const bulkInspectionContainerRef = useRef<HTMLDivElement>(null);
   const modalEditorZoneRef = useRef<HTMLDivElement>(null);
-  const cursorRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleMove = (e: PointerEvent) => {
-      if (cursorRef.current && editingItem && isHoveringModal && !isSpacePressed) {
-        cursorRef.current.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
-      }
-    };
-    window.addEventListener('pointermove', handleMove);
-    return () => window.removeEventListener('pointermove', handleMove);
-  }, [editingItem, isHoveringModal, isSpacePressed]);
 
   const bulkInputRef = useRef<HTMLInputElement>(null);
   const refInputRef = useRef<HTMLInputElement>(null);
@@ -225,80 +211,23 @@ export const BulkGenerator: React.FC = () => {
     }));
   };
 
-  const downloadSingle = async (item: BulkItem, asPsd: boolean = false) => {
+  const downloadSingle = (item: BulkItem) => {
     if (item.selectedResultIndex < 0) return;
-
-    if (!asPsd) {
-      const link = document.createElement('a');
-      link.href = item.results[item.selectedResultIndex];
-      link.download = `MARIE_BULK_${item.id}_v${item.selectedResultIndex}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
-    }
-
-    // Export as PSD with Mask Isolation
-    const layers: PsdLayerParams[] = [];
-    layers.push({ name: 'Original', base64: item.original });
-
-    const aiResult = item.results[item.selectedResultIndex];
-    if (item.mask) {
-      try {
-        const img = new Image();
-        img.src = item.original;
-        await new Promise(r => img.onload = r);
-        const clipped = await clipImageWithMask(aiResult, item.mask, img.width, img.height);
-        layers.push({ name: 'AI Result (Isolated)', base64: clipped });
-      } catch (e) {
-        layers.push({ name: 'AI Result', base64: aiResult });
-      }
-    } else {
-      layers.push({ name: 'AI Result', base64: aiResult });
-    }
-
-    try {
-      const blob = await createMultiLayerPsdBlob(layers);
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = `MARIE_BULK_${item.id}.psd`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(link.href);
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to generate PSD");
-    }
+    const link = document.createElement('a');
+    link.href = item.results[item.selectedResultIndex];
+    link.download = `MARIE_BULK_${item.id}_v${item.selectedResultIndex}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
-  const downloadAll = async (asPsd: boolean = false) => {
+  const downloadAll = async () => {
     const completedItems = items.filter(it => it.results.length > 0 && it.status === 'completed');
     if (completedItems.length === 0) return;
-
-    if (!asPsd) {
-      for (const item of completedItems) {
-        await downloadSingle(item, false);
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return;
+    for (const item of completedItems) {
+      downloadSingle(item);
+      await new Promise(r => setTimeout(r, 400));
     }
-
-    const promise = (async () => {
-      let count = 0;
-      for (const item of completedItems) {
-        await downloadSingle(item, true);
-        count++;
-        await new Promise(r => setTimeout(r, 400));
-      }
-      return count;
-    })();
-
-    toast.promise(promise, {
-      loading: `Gói ${completedItems.length} file PSD...`,
-      success: (c) => `Tải thành công ${c} file PSD!`,
-      error: 'Lỗi tải PSD hàng loạt'
-    });
   };
 
   const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -393,9 +322,8 @@ export const BulkGenerator: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6 p-6 animate-fadeIn max-w-[1800px] mx-auto min-h-screen">
-      {editingItem && isHoveringModal && !isSpacePressed && typeof document !== 'undefined' && createPortal(
-        <div ref={cursorRef} style={{ position: 'fixed', left: 0, top: 0, width: `${brushSize}px`, height: `${brushSize}px`, border: isEraser ? '2px solid rgba(255, 0, 0, 0.8)' : '2px solid white', boxShadow: '0 0 8px rgba(0,0,0,0.5)', backgroundColor: isEraser ? 'transparent' : `rgba(255, 0, 0, 0.4)`, pointerEvents: 'none', zIndex: 999999, borderRadius: '50%' }} />,
-        document.body
+      {editingItem && isHoveringModal && !isSpacePressed && (
+        <div style={{ position: 'fixed', left: `${mousePos.x}px`, top: `${mousePos.y}px`, width: `${brushSize}px`, height: `${brushSize}px`, transform: 'translate(-50%, -50%)', border: '2px solid white', boxShadow: '0 0 8px rgba(0,0,0,0.5)', backgroundColor: `rgba(255, 0, 0, 0.4)`, pointerEvents: 'none', zIndex: 9999, borderRadius: '50%' }} />
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
@@ -537,15 +465,9 @@ export const BulkGenerator: React.FC = () => {
               <button disabled={processing || items.length === 0} onClick={handleStartBatch} className="bg-blue-600 text-white font-black py-4 rounded-xl text-[9px] uppercase shadow-xl disabled:opacity-50 transition-all hover:bg-blue-500">
                 {processing ? <i className="fa-solid fa-spinner animate-spin"></i> : <i className="fa-solid fa-play"></i>} Chạy Batch
               </button>
-              <div className="flex bg-cyan-900/40 rounded-xl overflow-hidden shadow-xl border border-cyan-500/30">
-                <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={() => downloadAll(false)} className="flex-1 text-cyan-400 font-black py-4 text-[9px] uppercase disabled:opacity-50 transition-all hover:bg-cyan-500/20">
-                  <i className="fa-solid fa-download"></i> Tải Ảnh
-                </button>
-                <div className="w-px bg-cyan-500/30"></div>
-                <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={() => downloadAll(true)} className="flex-1 text-blue-400 font-black py-4 text-[9px] uppercase disabled:opacity-50 transition-all hover:bg-blue-500/20">
-                  <i className="fa-solid fa-layer-group"></i> Tải PSD
-                </button>
-              </div>
+              <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={downloadAll} className="bg-cyan-600 text-white font-black py-4 rounded-xl text-[9px] uppercase shadow-xl disabled:opacity-50 transition-all hover:bg-cyan-500">
+                <i className="fa-solid fa-download"></i> Tải Tất Cả
+              </button>
             </div>
           </div>
         </div>
@@ -563,10 +485,7 @@ export const BulkGenerator: React.FC = () => {
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 px-2">
                   <button onClick={(e) => { e.stopPropagation(); setEditingItem(item); }} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shadow-lg"><i className="fa-solid fa-paintbrush text-[11px]"></i></button>
                   {item.results.length > 0 && (
-                    <>
-                      <button onClick={(e) => { e.stopPropagation(); downloadSingle(item, false); }} className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center shadow-lg hover:bg-cyan-400 transition-colors" title="Tải ảnh PNG"><i className="fa-solid fa-download text-[11px]"></i></button>
-                      <button onClick={(e) => { e.stopPropagation(); downloadSingle(item, true); }} className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg hover:bg-blue-500 transition-colors" title="Tải ảnh PSD (Tách Layer AI)"><i className="fa-solid fa-layer-group text-[11px]"></i></button>
-                    </>
+                    <button onClick={(e) => { e.stopPropagation(); downloadSingle(item); }} className="w-8 h-8 rounded-full bg-cyan-500 text-white flex items-center justify-center shadow-lg"><i className="fa-solid fa-download text-[11px]"></i></button>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); processSingleItem(idx, 0, `RETRY_${Date.now()}`); }} className="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center shadow-lg"><i className="fa-solid fa-rotate-right text-[11px]"></i></button>
                 </div>
@@ -632,7 +551,7 @@ export const BulkGenerator: React.FC = () => {
         <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center p-4">
           <div className="w-full max-w-5xl bg-slate-900 rounded-[3rem] p-8 space-y-6 border border-slate-700 animate-slideUp">
             <div className="flex justify-between items-center"><h4 className="font-black uppercase text-sm text-red-500">Edit Mask</h4><button onClick={() => setEditingItem(null)} className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center hover:bg-red-500"><i className="fa-solid fa-xmark"></i></button></div>
-            <div ref={modalEditorZoneRef} onMouseDown={e => { if (e.button === 1 || isSpacePressed) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }} onMouseMove={e => { if (isPanning) { setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }) } }} onMouseUp={() => setIsPanning(false)} onMouseEnter={() => setIsHoveringModal(true)} onMouseLeave={() => { setIsPanning(false); setIsHoveringModal(false) }} className={`relative border border-slate-700 rounded-2xl overflow-hidden bg-black flex items-center justify-center h-[60vh] ${isPanning || isSpacePressed ? 'cursor-grab' : 'cursor-none'}`}>
+            <div ref={modalEditorZoneRef} onMouseDown={e => { if (e.button === 1 || isSpacePressed) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }} onMouseMove={e => { setMousePos({ x: e.clientX, y: e.clientY }); if (isPanning) { setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }) } }} onMouseUp={() => setIsPanning(false)} onMouseEnter={() => setIsHoveringModal(true)} onMouseLeave={() => { setIsPanning(false); setIsHoveringModal(false) }} className={`relative border border-slate-700 rounded-2xl overflow-hidden bg-black flex items-center justify-center h-[60vh] ${isPanning || isSpacePressed ? 'cursor-grab' : 'cursor-none'}`}>
               <div style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`, transition: isPanning || isDrawing ? 'none' : 'transform 0.1s' }}>
                 <div className="relative inline-block">
                   <img ref={modalImgRef} src={editingItem.original} className="max-h-[50vh] select-none pointer-events-none" onLoad={() => { if (modalDisplayCanvasRef.current && modalCanvasRef.current && modalImgRef.current) { const img = modalImgRef.current; modalCanvasRef.current.width = img.naturalWidth; modalCanvasRef.current.height = img.naturalHeight; modalDisplayCanvasRef.current.width = img.clientWidth; modalDisplayCanvasRef.current.height = img.clientHeight; const dctx = modalDisplayCanvasRef.current.getContext('2d')!; dctx.lineCap = 'round'; dctx.strokeStyle = '#FF0000'; const mctx = modalCanvasRef.current.getContext('2d')!; mctx.lineCap = 'round'; mctx.strokeStyle = '#FF0000'; if (editingItem.mask) { const mi = new Image(); mi.onload = () => { dctx.drawImage(mi, 0, 0, img.clientWidth, img.clientHeight); mctx.drawImage(mi, 0, 0) }; mi.src = editingItem.mask } } }} />
@@ -643,47 +562,41 @@ export const BulkGenerator: React.FC = () => {
                         setIsDrawing(true);
                         (e.target as HTMLElement).setPointerCapture(e.pointerId);
                         const rect = modalDisplayCanvasRef.current!.getBoundingClientRect();
-                        const nx = (e.clientX - rect.left) / rect.width;
-                        const ny = (e.clientY - rect.top) / rect.height;
+                        const scaleX = rect.width / modalDisplayCanvasRef.current!.width;
+                        const scaleY = rect.height / modalDisplayCanvasRef.current!.height;
+                        const x = (e.clientX - rect.left) / scaleX;
+                        const y = (e.clientY - rect.top) / scaleY;
 
                         const dctx = modalDisplayCanvasRef.current!.getContext('2d')!;
                         const mctx = modalCanvasRef.current!.getContext('2d')!;
-                        const dX = nx * modalDisplayCanvasRef.current!.width;
-                        const dY = ny * modalDisplayCanvasRef.current!.height;
-                        const mX = nx * modalCanvasRef.current!.width;
-                        const mY = ny * modalCanvasRef.current!.height;
-
-                        const bsD = brushSize * (modalDisplayCanvasRef.current!.width / rect.width);
-                        const bsM = brushSize * (modalCanvasRef.current!.width / rect.width);
+                        const bsD = brushSize / scaleX;
+                        const bsM = brushSize;
 
                         dctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
                         mctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
 
-                        dctx.beginPath(); dctx.moveTo(dX, dY); dctx.lineWidth = bsD; dctx.lineTo(dX, dY); dctx.stroke();
-                        mctx.beginPath(); mctx.moveTo(mX, mY); mctx.lineWidth = bsM; mctx.lineTo(mX, mY); mctx.stroke();
+                        dctx.beginPath(); dctx.moveTo(x, y); dctx.lineWidth = bsD; dctx.lineTo(x, y); dctx.stroke();
+                        mctx.beginPath(); mctx.moveTo(x, y); mctx.lineWidth = bsM; mctx.lineTo(x, y); mctx.stroke();
                       }
                     }}
                     onPointerMove={(e) => {
                       if (isDrawing && !isSpacePressed) {
                         const rect = modalDisplayCanvasRef.current!.getBoundingClientRect();
-                        const nx = (e.clientX - rect.left) / rect.width;
-                        const ny = (e.clientY - rect.top) / rect.height;
+                        const scaleX = rect.width / modalDisplayCanvasRef.current!.width;
+                        const scaleY = rect.height / modalDisplayCanvasRef.current!.height;
+                        const x = (e.clientX - rect.left) / scaleX;
+                        const y = (e.clientY - rect.top) / scaleY;
 
                         const dctx = modalDisplayCanvasRef.current!.getContext('2d')!;
                         const mctx = modalCanvasRef.current!.getContext('2d')!;
-                        const dX = nx * modalDisplayCanvasRef.current!.width;
-                        const dY = ny * modalDisplayCanvasRef.current!.height;
-                        const mX = nx * modalCanvasRef.current!.width;
-                        const mY = ny * modalCanvasRef.current!.height;
-
-                        const bsD = brushSize * (modalDisplayCanvasRef.current!.width / rect.width);
-                        const bsM = brushSize * (modalCanvasRef.current!.width / rect.width);
+                        const bsD = brushSize / scaleX;
+                        const bsM = brushSize;
 
                         dctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
                         mctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
 
-                        dctx.lineWidth = bsD; dctx.lineTo(dX, dY); dctx.stroke();
-                        mctx.lineWidth = bsM; mctx.lineTo(mX, mY); mctx.stroke();
+                        dctx.lineWidth = bsD; dctx.lineTo(x, y); dctx.stroke();
+                        mctx.lineWidth = bsM; mctx.lineTo(x, y); mctx.stroke();
                       }
                     }}
                     onPointerUp={(e) => {
@@ -698,23 +611,18 @@ export const BulkGenerator: React.FC = () => {
             </div>
             <div className="flex flex-col gap-6 pt-6 border-t border-slate-800">
               <div className="flex justify-between items-center w-full">
-                <div className="flex items-center bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 shadow-2xl py-1 px-1 rounded-full gap-2">
-                  <div className="flex bg-slate-950/50 rounded-full p-1 border border-slate-700/50 relative">
-                    <div className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-full transition-all duration-300 ${isEraser ? 'translate-x-[calc(100%+4px)] bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'translate-x-0 bg-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.5)]'}`}></div>
-                    <button onClick={() => setIsEraser(false)} className={`relative z-10 px-6 py-2.5 rounded-full text-[9px] font-black uppercase transition-colors duration-300 ${!isEraser ? 'text-white' : 'text-slate-500 hover:text-white'}`}>CỌ VẼ</button>
-                    <button onClick={() => setIsEraser(true)} className={`relative z-10 px-6 py-2.5 rounded-full text-[9px] font-black uppercase transition-colors duration-300 ${isEraser ? 'text-white' : 'text-slate-500 hover:text-white'}`}>CỤC TẨY</button>
-                  </div>
-
-                  <div className="w-px h-8 bg-slate-800 mx-2"></div>
-                  <div className="flex items-center gap-4 px-4">
-                    <span className="text-[10px] font-black text-slate-400 uppercase w-20">Size: {brushSize}px</span>
-                    <input type="range" min="5" max="250" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} className="w-48 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_0_10px_rgba(255,255,255,0.5)] transition-all" />
-                  </div>
+                <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-xl">
+                  <button onClick={() => setIsEraser(false)} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${!isEraser ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-800'}`}>CỌ VẼ</button>
+                  <button onClick={() => setIsEraser(true)} className={`px-4 py-2 rounded-lg text-[9px] font-black uppercase transition-all ${isEraser ? 'bg-red-500 text-white shadow' : 'text-slate-500 hover:bg-slate-800'}`}>CỤC TẨY</button>
                 </div>
-                <div className="flex justify-end gap-3 w-full">
-                  <button onClick={() => { const dctx = modalDisplayCanvasRef.current!.getContext('2d')!; const mctx = modalCanvasRef.current!.getContext('2d')!; dctx.clearRect(0, 0, 99999, 99999); mctx.clearRect(0, 0, 99999, 99999) }} className="px-6 py-3 text-[10px] font-black text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500/10 transition-colors bg-red-500/5">Xóa Mask</button>
-                  <button onClick={() => { setItems(prev => prev.map(it => it.id === editingItem.id ? { ...it, mask: modalCanvasRef.current!.toDataURL() } : it)); setEditingItem(null) }} className="bg-blue-600 px-10 py-3 rounded-xl text-[10px] font-black text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20 transition-all">Lưu Mask</button>
+                <div className="flex items-center gap-4 bg-slate-900/80 px-4 py-3 rounded-xl border border-slate-700">
+                  <span className="text-[10px] font-black text-slate-500 uppercase">Cọ: {brushSize}px</span>
+                  <input type="range" min="5" max="250" value={brushSize} onChange={(e) => setBrushSize(parseInt(e.target.value))} className="w-48 h-1.5 accent-red-500" />
                 </div>
+              </div>
+              <div className="flex justify-end gap-3 w-full">
+                <button onClick={() => { const dctx = modalDisplayCanvasRef.current!.getContext('2d')!; const mctx = modalCanvasRef.current!.getContext('2d')!; dctx.clearRect(0, 0, 99999, 99999); mctx.clearRect(0, 0, 99999, 99999) }} className="px-6 py-3 text-[10px] font-black text-red-500 border border-red-500/20 rounded-xl hover:bg-red-500/10">Xóa Mask</button>
+                <button onClick={() => { setItems(prev => prev.map(it => it.id === editingItem.id ? { ...it, mask: modalCanvasRef.current!.toDataURL() } : it)); setEditingItem(null) }} className="bg-blue-600 px-10 py-3 rounded-xl text-[10px] font-black text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20">Lưu Mask</button>
               </div>
             </div>
           </div>

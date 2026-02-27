@@ -1007,37 +1007,6 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
               <button onClick={extractTypography} disabled={loading || !activeItem} className="py-3 bg-fuchsia-900/20 border border-fuchsia-500/30 rounded-xl text-[9px] font-black text-fuchsia-400 uppercase hover:bg-fuchsia-500/30 transition-all flex items-center justify-center gap-2"><Type className="w-3.5 h-3.5" /> Quét Chữ (Typos)</button>
               <button onClick={() => { setItems([]); setCurrentIndex(-1); }} className="py-3 bg-red-900/10 border border-red-500/20 rounded-xl text-[9px] font-black text-red-500/80 uppercase hover:bg-red-500/20 hover:text-red-500 transition-all flex items-center justify-center gap-2"><Trash2 className="w-3.5 h-3.5" /> Xóa toàn bộ</button>
             </div>
-
-            <div className="grid grid-cols-2 gap-2 mt-2">
-              <button onClick={handleExtractMasks} disabled={loading || !activeItem} className="py-3 bg-emerald-900/20 border border-emerald-500/30 rounded-xl text-[9px] font-black text-emerald-400 uppercase hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2"><Wand2 className="w-3.5 h-3.5" /> Tách Mask (AI)</button>
-              <button onClick={handleExtractDepthMap} disabled={loading || !activeItem} className="py-3 bg-cyan-900/20 border border-cyan-500/30 rounded-xl text-[9px] font-black text-cyan-400 uppercase hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-2"><Layers className="w-3.5 h-3.5" /> Tách 3D Depth</button>
-            </div>
-
-            {(activeItem?.semanticMasks || activeItem?.depthMap) && (
-              <div className="mt-4 p-3 bg-slate-900/80 rounded-xl border border-slate-700 space-y-3">
-                <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">Dữ Liệu Phân Tích (Sẽ Lưu Vào PSD)</h4>
-
-                {activeItem?.semanticMasks && (
-                  <div className="space-y-1">
-                    <span className="text-[8px] font-bold text-emerald-500 uppercase">Semantic Masks (Chủ thể / Nền / Da)</span>
-                    <div className="grid grid-cols-3 gap-1">
-                      <img src={activeItem.semanticMasks.subject} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Chủ Thể" />
-                      <img src={activeItem.semanticMasks.background} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Phông Nền" />
-                      <img src={activeItem.semanticMasks.skin} className="w-full h-12 object-cover rounded bg-black border border-slate-700" title="Mask Da Mặt" />
-                    </div>
-                  </div>
-                )}
-
-                {activeItem?.depthMap && (
-                  <div className="space-y-1">
-                    <span className="text-[8px] font-bold text-cyan-500 uppercase">3D Depth Map</span>
-                    <div className="w-full h-20 rounded bg-black border border-slate-700 overflow-hidden">
-                      <img src={activeItem.depthMap} className="w-full h-full object-cover" title="Z-Depth Map" />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {activeItem && activeItem.results.length > 0 && (

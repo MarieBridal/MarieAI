@@ -4,8 +4,7 @@ export enum Tab {
   V2 = 'v2',
   V3 = 'v3',
   CHAT = 'chat',
-  ANALYZE = 'analyze',
-  DESIGN = 'design'
+  ANALYZE = 'analyze'
 }
 
 export interface ChatMessage {

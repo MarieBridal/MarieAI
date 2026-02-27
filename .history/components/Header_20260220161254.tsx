@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Tab } from '../types';
-import { Sparkles, Crown, Brain, Microscope, User, Camera } from 'lucide-react';
+import { Sparkles, Crown, Brain, Microscope, User } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../utils';
 
@@ -36,7 +36,6 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, hasKey,
           { id: Tab.VIP, icon: Crown, label: 'Marie VIP', color: 'from-amber-400 to-orange-600', shadow: 'shadow-amber-900/40' },
           { id: Tab.CHAT, icon: Brain, label: 'Trợ Lý', color: 'from-blue-500 to-indigo-600', shadow: 'shadow-blue-900/40' },
           { id: Tab.ANALYZE, icon: Microscope, label: 'Phân Tích', color: 'from-blue-500 to-indigo-600', shadow: 'shadow-blue-900/40' },
-          { id: Tab.DESIGN, icon: Camera, label: 'Design PSD', color: 'from-violet-500 to-purple-600', shadow: 'shadow-violet-900/40' },
         ].map((tab) => {
           const isActive = activeTab === tab.id;
           const Icon = tab.icon;
