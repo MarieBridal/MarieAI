@@ -776,7 +776,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     const promise = createMultiLayerPsdBlob(layers, item.detectedTexts).then(blob => {
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
-      link.download = `MARIE_PAINT_${item.id}.psd`;
+      link.download = `${item.originalName || 'MARIE_' + item.id}.psd`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -798,7 +798,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       for (const item of completedItems) {
         const link = document.createElement('a');
         link.href = item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0];
-        link.download = `MARIE_PAINT_${item.id}.png`;
+        link.download = `${item.originalName || 'MARIE_' + item.id}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -855,7 +855,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
         const blob = await createMultiLayerPsdBlob(layers, item.detectedTexts);
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `MARIE_PAINT_${item.id}.psd`;
+        link.download = `${item.originalName || 'MARIE_' + item.id}.psd`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
