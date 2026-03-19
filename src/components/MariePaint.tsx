@@ -813,7 +813,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
   };
 
   return (
-    <div className="flex flex-col lg:flex-row gap-8 p-6 animate-fadeIn max-w-[1800px] mx-auto h-full min-h-[calc(100vh-140px)]">
+    <div className="flex flex-col lg:flex-row gap-8 p-6 animate-fadeIn max-w-[1800px] mx-auto h-full min-h-[calc(100vh-140px)] overflow-hidden">
       {canvasActive && isHovering && activeItem?.selectedResultIndex === -1 && !loading && !isSpacePressed && typeof document !== 'undefined' && createPortal(
         <div ref={cursorRef} style={{ position: 'fixed', left: 0, top: 0, width: brushSize, height: brushSize, border: isEraser ? '2px solid rgba(255,0,0,0.8)' : '2px solid white', backgroundColor: isEraser ? 'transparent' : 'rgba(255, 0, 0, 0.4)', pointerEvents: 'none', zIndex: 999999, borderRadius: '50%' }} />,
         document.body
@@ -1089,7 +1089,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col gap-6">
+      <div className="flex-1 flex flex-col gap-6 min-w-0">
         <div
           ref={containerRef}
           onMouseDown={e => { if (e.button === 1 || isSpacePressed || activeItem?.selectedResultIndex !== -1) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }}
