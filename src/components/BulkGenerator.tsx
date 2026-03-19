@@ -66,6 +66,7 @@ export const BulkGenerator: React.FC = () => {
   const [noiseProfile, setNoiseProfile] = useState<NoiseProfile>('digital');
   const [processing, setProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
+  const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0, loading: false });
   const [mode, setMode] = useState<'edit' | 'upscale'>('edit');
   const [isChainedDNA, setIsChainedDNA] = useState(true);
 
@@ -210,9 +211,15 @@ export const BulkGenerator: React.FC = () => {
 
   const handleFiles = async (files: File[]) => {
     const imageFiles = files.filter(f => f.type.startsWith('image/'));
-    // Xử lý từng file tuần tự, tạo thumbnail nhỏ thay vì load full base64
-    for (const file of imageFiles) {
+    if (imageFiles.length === 0) return;
+    setUploadProgress({ current: 0, total: imageFiles.length, loading: true });
+    // Xử lý từng file, yield giữa mỗi file để trình duyệt không đứng
+    for (let i = 0; i < imageFiles.length; i++) {
+      const file = imageFiles[i];
+      setUploadProgress(prev => ({ ...prev, current: i + 1 }));
       try {
+        // Yield cho browser render giữa mỗi file
+        await new Promise(r => setTimeout(r, 0));
         const thumbnail = await createThumbnail(file);
         const blobUrl = URL.createObjectURL(file);
         const newItem: BulkItem = {
@@ -237,6 +244,33 @@ export const BulkGenerator: React.FC = () => {
         console.warn('Bỏ qua file lỗi:', file.name, e);
       }
     }
+    setUploadProgress({ current: 0, total: 0, loading: false });
+  };
+
+  const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) handleFiles(Array.from(files));
+    if (bulkInputRef.current) bulkInputRef.current.value = '';
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingBulk(false);
+    const files = Array.from(e.dataTransfer.files) as File[];
+    if (files.length > 0) handleFiles(files);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingBulk(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingBulk(false);
   };
 
   const useResultAsSource = (id: string) => {
@@ -341,12 +375,7 @@ export const BulkGenerator: React.FC = () => {
     });
   };
 
-  const handleBulkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = e.target.files;
-    if (!fileList) return;
-    handleFiles(Array.from(fileList) as File[]);
-    if (bulkInputRef.current) bulkInputRef.current.value = '';
-  };
+
 
   const handleRefUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -456,10 +485,25 @@ export const BulkGenerator: React.FC = () => {
           <div className="glass-effect p-6 rounded-3xl border border-slate-700 shadow-2xl space-y-6">
             <h3 className="text-xl font-bold text-purple-400 uppercase tracking-tighter">MARIE BATCH CONTROL</h3>
             <div className="space-y-4">
-              <button onClick={() => bulkInputRef.current?.click()} className={`w-full py-8 border-2 border-dashed rounded-2xl flex flex-col items-center gap-2 bg-slate-900/40 transition-all ${isDraggingBulk ? 'border-blue-500 bg-blue-500/10' : 'border-slate-700 hover:border-blue-500'}`}>
-                <i className="fa-solid fa-images text-xl text-slate-500"></i>
-                <span className="text-[10px] text-slate-400 font-black uppercase">Thêm Batch RAW</span>
-              </button>
+              <div
+                onClick={() => !uploadProgress.loading && bulkInputRef.current?.click()}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                className={`w-full py-8 border-2 border-dashed rounded-2xl flex flex-col items-center gap-2 bg-slate-900/40 transition-all cursor-pointer ${isDraggingBulk ? 'border-blue-500 bg-blue-500/10 scale-[1.02]' : 'border-slate-700 hover:border-blue-500'}`}
+              >
+                {uploadProgress.loading ? (
+                  <>
+                    <svg className="animate-spin w-5 h-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    <span className="text-[10px] text-blue-400 font-black uppercase">{uploadProgress.current}/{uploadProgress.total} đang tải...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" /></svg>
+                    <span className="text-[10px] text-slate-400 font-black uppercase">Kéo thả hoặc bấm để thêm ảnh</span>
+                  </>
+                )}
+              </div>
               <input type="file" ref={bulkInputRef} onChange={handleBulkUpload} className="hidden" accept="image/*" multiple />
 
               {/* Batch Blending Controls */}
