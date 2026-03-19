@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Tab } from '../types';
-import { Sparkles, Crown, Brain, Microscope, User, Camera, Layers } from 'lucide-react';
+import { Sparkles, Crown, Brain, Microscope, User, Camera } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { cn } from '../utils';
 
@@ -34,7 +34,6 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, hasKey,
       <nav className="hidden lg:flex items-center gap-1 bg-slate-900/60 p-1.5 rounded-2xl border border-white/5 shadow-inner">
         {[
           { id: Tab.VIP, icon: Crown, label: 'Marie VIP', color: 'from-amber-400 to-orange-600', shadow: 'shadow-amber-900/40' },
-          { id: Tab.BULK, icon: Layers, label: 'Batch', color: 'from-purple-500 to-pink-600', shadow: 'shadow-purple-900/40' },
           { id: Tab.CHAT, icon: Brain, label: 'Trợ Lý', color: 'from-blue-500 to-indigo-600', shadow: 'shadow-blue-900/40' },
           { id: Tab.ANALYZE, icon: Microscope, label: 'Phân Tích', color: 'from-blue-500 to-indigo-600', shadow: 'shadow-blue-900/40' },
           { id: Tab.DESIGN, icon: Camera, label: 'Design PSD', color: 'from-violet-500 to-purple-600', shadow: 'shadow-violet-900/40' },

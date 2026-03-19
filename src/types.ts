@@ -1,7 +1,6 @@
 
 export enum Tab {
   VIP = 'vip',
-  BULK = 'bulk',
   CHAT = 'chat',
   ANALYZE = 'analyze',
   DESIGN = 'design'

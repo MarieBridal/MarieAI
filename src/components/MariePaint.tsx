@@ -15,6 +15,7 @@ import { clipImageWithMask, extractMasksFromMap, SemanticMasks } from '../utils/
 
 interface PaintItem {
   id: string;
+  originalName: string;
   original: string;
   results: string[];
   rawResults: string[];
@@ -63,6 +64,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
   const [canvasActive, setCanvasActive] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
 
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -270,11 +272,13 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     const files = e.target.files;
     if (!files) return;
 
-    Array.from(files).forEach(file => {
+    Array.from(files as FileList).forEach((file: File) => {
       const reader = new FileReader();
+      const baseName = file.name.replace(/\.[^.]+$/, '') || 'MARIE';
       reader.onload = (ev) => {
         const newItem: PaintItem = {
           id: Math.random().toString(36).substr(2, 9),
+          originalName: baseName,
           original: ev.target?.result as string,
           results: [],
           rawResults: [],
@@ -296,6 +300,37 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       reader.readAsDataURL(file as Blob);
     });
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleDropFiles = (files: File[]) => {
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    imageFiles.forEach(file => {
+      const reader = new FileReader();
+      const baseName = file.name.replace(/\.[^.]+$/, '') || 'MARIE';
+      reader.onload = (ev) => {
+        const newItem: PaintItem = {
+          id: Math.random().toString(36).substr(2, 9),
+          originalName: baseName,
+          original: ev.target?.result as string,
+          results: [],
+          rawResults: [],
+          selectedResultIndex: -1,
+          undoStack: [],
+          redoStack: [],
+          mask: null,
+          prompt: activeItem?.prompt || defaultPrompt || '',
+          featherAmount: defaultFeather,
+          blendOpacity: defaultOpacity,
+          maskDilation: defaultDilation
+        };
+        setItems(prev => {
+          const next = [...prev, newItem];
+          if (currentIndex === -1) setCurrentIndex(0);
+          return next;
+        });
+      };
+      reader.readAsDataURL(file as Blob);
+    });
   };
 
   const saveToUndoStack = () => {
@@ -615,7 +650,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     if (format === 'png') {
       const link = document.createElement('a');
       link.href = item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0];
-      link.download = `MARIE_PAINT_${item.id}.png`;
+      link.download = `${item.originalName || 'MARIE_' + item.id}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -1052,7 +1087,24 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       </div>
 
       <div className="flex-1 flex flex-col gap-6">
-        <div ref={containerRef} onMouseDown={e => { if (e.button === 1 || isSpacePressed || activeItem?.selectedResultIndex !== -1) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }} onMouseMove={e => { if (isPanning) { setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }) } }} onMouseUp={() => setIsPanning(false)} onMouseEnter={() => setIsHovering(true)} onMouseLeave={() => setIsHovering(false)} className={`flex-1 glass-effect rounded-[3rem] relative overflow-hidden flex flex-col items-center justify-center border border-slate-700 bg-slate-950/40 min-h-[500px] shadow-inner ${canvasActive && activeItem?.selectedResultIndex === -1 && !isSpacePressed ? 'cursor-none' : 'cursor-default'}`}>
+        <div
+          ref={containerRef}
+          onMouseDown={e => { if (e.button === 1 || isSpacePressed || activeItem?.selectedResultIndex !== -1) { setIsPanning(true); setPanStart({ x: e.clientX - offset.x, y: e.clientY - offset.y }) } }}
+          onMouseMove={e => { if (isPanning) { setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y }) } }}
+          onMouseUp={() => setIsPanning(false)}
+          onMouseEnter={() => setIsHovering(true)}
+          onMouseLeave={() => setIsHovering(false)}
+          onDrop={e => { e.preventDefault(); setIsDraggingCanvas(false); const files = Array.from(e.dataTransfer.files) as File[]; if (files.length > 0) handleDropFiles(files); }}
+          onDragOver={e => { e.preventDefault(); setIsDraggingCanvas(true); }}
+          onDragLeave={e => { e.preventDefault(); setIsDraggingCanvas(false); }}
+          className={`flex-1 glass-effect rounded-[3rem] relative overflow-hidden flex flex-col items-center justify-center border border-slate-700 bg-slate-950/40 min-h-[500px] shadow-inner ${isDraggingCanvas ? 'border-blue-500 bg-blue-500/5' : ''} ${canvasActive && activeItem?.selectedResultIndex === -1 && !isSpacePressed ? 'cursor-none' : 'cursor-default'}`}
+        >
+          {isDraggingCanvas && (
+            <div className="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 rounded-[3rem] border-2 border-dashed border-blue-400 bg-blue-900/20 pointer-events-none">
+              <svg className="w-14 h-14 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+              <p className="text-blue-300 font-black text-sm uppercase tracking-widest">Thả ảnh vào đây</p>
+            </div>
+          )}
           {currentImage ? (
             <div style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom})`, transition: isPanning || isDrawing ? 'none' : 'transform 0.15s' }} className="relative inline-block rounded-2xl bg-black shadow-[0_50px_100px_rgba(0,0,0,0.8)]">
               <img ref={imageRef} style={{ filter: dynamicFilterStyle }} src={showOriginal ? activeItem?.original : currentImage} className="max-h-[75vh] w-auto block select-none pointer-events-none rounded-2xl transition-all duration-75" />
