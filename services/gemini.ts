@@ -459,7 +459,7 @@ Do not add any text or borders. Output purely a monochrome depth layer matching 
 
   async chat(history: any[], message: string) {
     const ai = this.getClient();
-    const chat = ai.chats.create({ model: 'gemini-3-pro-preview' });
+    const chat = ai.chats.create({ model: 'gemini-3-pro-preview', history });
     const res = await chat.sendMessage({ message });
     return res.text;
   }
