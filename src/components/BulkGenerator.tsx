@@ -9,7 +9,9 @@ import { toast } from 'sonner';
 
 interface BulkItem {
   id: string;
-  original: string;
+  file: File; // Giữ File gốc, chỉ đọc base64 khi cần xử lý
+  original: string; // Blob URL cho hiển thị full-size preview
+  thumbnail: string; // Base64 nhỏ (~300px) cho grid
   results: string[];
   rawResults: string[]; // Lưu trữ ảnh AI thô để hòa trộn lại
   status: 'pending' | 'processing' | 'completed' | 'error';
@@ -18,6 +20,38 @@ interface BulkItem {
   selectedResultIndex: number;
   featherAmount: number;
   blendOpacity: number;
+}
+
+// Đọc full base64 từ File chỉ khi cần xử lý AI (on-demand, không giữ trong state)
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Lỗi đọc file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Tạo thumbnail nhỏ từ File (~300px) để hiển thị grid, tiết kiệm RAM
+function createThumbnail(file: File, maxSize: number = 300): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > h) { if (w > maxSize) { h = (h * maxSize) / w; w = maxSize; } }
+      else { if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; } }
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.6));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Lỗi tạo thumbnail')); };
+    img.src = url;
+  });
 }
 
 export const BulkGenerator: React.FC = () => {
@@ -31,6 +65,7 @@ export const BulkGenerator: React.FC = () => {
   const [noiseTarget, setNoiseTarget] = useState<'global' | 'mask'>('global');
   const [noiseProfile, setNoiseProfile] = useState<NoiseProfile>('digital');
   const [processing, setProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [mode, setMode] = useState<'edit' | 'upscale'>('edit');
   const [isChainedDNA, setIsChainedDNA] = useState(true);
 
@@ -173,14 +208,18 @@ export const BulkGenerator: React.FC = () => {
     } : it));
   }, [items]);
 
-  const handleFiles = (files: File[]) => {
-    files.forEach((file: File) => {
-      if (!file.type.startsWith('image/')) return;
-      const reader = new FileReader();
-      reader.onload = () => {
+  const handleFiles = async (files: File[]) => {
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    // Xử lý từng file tuần tự, tạo thumbnail nhỏ thay vì load full base64
+    for (const file of imageFiles) {
+      try {
+        const thumbnail = await createThumbnail(file);
+        const blobUrl = URL.createObjectURL(file);
         const newItem: BulkItem = {
           id: Math.random().toString(36).substr(2, 9),
-          original: reader.result as string,
+          file,
+          original: blobUrl,
+          thumbnail,
           results: [],
           rawResults: [],
           mask: null,
@@ -194,9 +233,10 @@ export const BulkGenerator: React.FC = () => {
           if (!selectedItemId) setSelectedItemId(newItem.id);
           return updated;
         });
-      };
-      reader.readAsDataURL(file);
-    });
+      } catch (e) {
+        console.warn('Bỏ qua file lỗi:', file.name, e);
+      }
+    }
   };
 
   const useResultAsSource = (id: string) => {
@@ -346,16 +386,22 @@ export const BulkGenerator: React.FC = () => {
     const item = items[index];
     setItems(prev => prev.map((it, idx) => idx === index ? { ...it, status: 'processing', error: undefined } : it));
     try {
-      const promises = Array.from({ length: numVariants }).map(async (_, vIdx) => {
+      // Đọc full base64 ON-DEMAND chỉ khi cần xử lý AI
+      const fullBase64 = await readFileAsBase64(item.file);
+
+      // Xử lý TUẦN TỰ từng variant thay vì Promise.all (tránh overload RAM)
+      const rawResponses: string[] = [];
+      for (let vIdx = 0; vIdx < numVariants; vIdx++) {
         const res = await gemini.processImage(
           mode === 'upscale' ? "Quantum Optical Super-Res Reconstruction." : (prompt || "Precision reconstruction."),
-          item.original, quality, chainedRef || refImage || undefined, customSalt || `BULK_${item.id}_${Date.now()}_v${vIdx}`,
+          fullBase64, quality, chainedRef || refImage || undefined, customSalt || `BULK_${item.id}_${Date.now()}_v${vIdx}`,
           !!chainedRef, noiseAmount, noiseTarget === 'mask' ? item.mask : null, noiseProfile
         );
-        return res || null;
-      });
+        if (res) rawResponses.push(res);
+        // Delay nhỏ giữa các variant để trình duyệt "thở"
+        if (vIdx < numVariants - 1) await new Promise(r => setTimeout(r, 500));
+      }
 
-      const rawResponses = (await Promise.all(promises)).filter(r => r !== null) as string[];
       if (rawResponses.length > 0) {
         setItems(prev => prev.map((it, idx) => idx === index ? {
           ...it,
@@ -377,17 +423,24 @@ export const BulkGenerator: React.FC = () => {
   const handleStartBatch = async () => {
     if (processing || items.length === 0) return;
     setProcessing(true);
+    const pendingItems = items.filter(it => it.status !== 'completed' || it.results.length === 0);
+    setBatchProgress({ current: 0, total: pendingItems.length || items.length });
     const batchSalt = `BATCH_${Date.now()}`;
     let lastRes: string | undefined = undefined;
+    let processed = 0;
     for (let i = 0; i < items.length; i++) {
       if (items[i].status !== 'completed' || items[i].results.length === 0) {
+        processed++;
+        setBatchProgress({ current: processed, total: pendingItems.length });
         const results = await processSingleItem(i, 0, batchSalt, isChainedDNA ? lastRes : undefined);
         if (results && results.length > 0) lastRes = results[0];
-        await new Promise(r => setTimeout(r, 1000));
+        // Delay giữa các item để tránh overload
+        await new Promise(r => setTimeout(r, 800));
       } else {
         lastRes = items[i].rawResults[items[i].selectedResultIndex] || undefined;
       }
     }
+    setBatchProgress({ current: 0, total: 0 });
     setProcessing(false);
   };
 
@@ -535,7 +588,14 @@ export const BulkGenerator: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-2">
               <button disabled={processing || items.length === 0} onClick={handleStartBatch} className="bg-blue-600 text-white font-black py-4 rounded-xl text-[9px] uppercase shadow-xl disabled:opacity-50 transition-all hover:bg-blue-500">
-                {processing ? <i className="fa-solid fa-spinner animate-spin"></i> : <i className="fa-solid fa-play"></i>} Chạy Batch
+                {processing ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin w-3.5 h-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+                    {batchProgress.total > 0 ? `${batchProgress.current}/${batchProgress.total}` : '...'}
+                  </span>
+                ) : (
+                  <span>▶ Chạy Batch</span>
+                )}
               </button>
               <div className="flex bg-cyan-900/40 rounded-xl overflow-hidden shadow-xl border border-cyan-500/30">
                 <button disabled={processing || items.filter(it => it.results.length > 0).length === 0} onClick={() => downloadAll(false)} className="flex-1 text-cyan-400 font-black py-4 text-[9px] uppercase disabled:opacity-50 transition-all hover:bg-cyan-500/20">
@@ -558,7 +618,7 @@ export const BulkGenerator: React.FC = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-2 2xl:grid-cols-3 gap-3 max-h-[calc(100vh-200px)] overflow-y-auto custom-scrollbar pr-2">
             {items.map((item, idx) => (
               <div key={item.id} onClick={() => setSelectedItemId(item.id)} className={`group glass-effect rounded-2xl border transition-all cursor-pointer overflow-hidden relative aspect-square ${selectedItemId === item.id ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-800'}`}>
-                <img src={(item.results.length > 0 && item.selectedResultIndex >= 0) ? item.results[item.selectedResultIndex] : item.original} className={`w-full h-full object-cover ${item.status === 'processing' ? 'blur-sm opacity-50' : ''}`} />
+                <img src={(item.results.length > 0 && item.selectedResultIndex >= 0) ? item.results[item.selectedResultIndex] : item.thumbnail} className={`w-full h-full object-cover ${item.status === 'processing' ? 'blur-sm opacity-50' : ''}`} loading="lazy" />
                 <button onClick={(e) => { e.stopPropagation(); if (selectedItemId === item.id) setSelectedItemId(null); setItems(prev => prev.filter(it => it.id !== item.id)) }} className="absolute top-2 left-2 z-30 w-6 h-6 rounded-full bg-red-600/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg"><i className="fa-solid fa-xmark text-[10px]"></i></button>
                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 px-2">
                   <button onClick={(e) => { e.stopPropagation(); setEditingItem(item); }} className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shadow-lg"><i className="fa-solid fa-paintbrush text-[11px]"></i></button>
