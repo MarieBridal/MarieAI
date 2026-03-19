@@ -973,9 +973,8 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
                 setDefaultPrompt(newPrompt);
               }
             }}
-            disabled={activeItem === null && items.length > 0}
             placeholder="Nhập yêu cầu tại đây..."
-            className="w-full h-24 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 transition-all shadow-inner disabled:opacity-50"
+            className="w-full h-24 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs outline-none focus:ring-2 focus:ring-blue-500/30 transition-all shadow-inner"
           />
 
           <div className="p-4 bg-slate-950/80 rounded-2xl border border-blue-500/20 space-y-4">
