@@ -6,6 +6,7 @@ import { MariePaint } from './components/MariePaint';
 import { Chat } from './components/Chat';
 import { Analyze } from './components/Analyze';
 import { DesignExtractor } from './components/DesignExtractor';
+import { BulkGenerator } from './components/BulkGenerator';
 import { checkApiKey, openKeySelector } from './services/gemini';
 import { Toaster } from 'sonner';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -31,6 +32,7 @@ const App: React.FC = () => {
   const renderTab = () => {
     switch (activeTab) {
       case Tab.VIP: return <MariePaint key="vip" title="MARIE VIP" />;
+      case Tab.BULK: return <BulkGenerator key="bulk" />;
       case Tab.CHAT: return <Chat key="chat" />;
       case Tab.ANALYZE: return <Analyze key="analyze" />;
       case Tab.DESIGN: return <DesignExtractor key="design" />;
