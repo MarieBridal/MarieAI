@@ -1199,7 +1199,7 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
 
         {/* Batch Tray */}
         {items.length > 0 && (
-          <div className="glass-effect rounded-[2rem] p-4 flex gap-4 overflow-x-auto custom-scrollbar border border-slate-700/50">
+          <div className="glass-effect rounded-[2rem] p-4 flex gap-4 overflow-x-auto custom-scrollbar border border-slate-700/50 w-full min-w-0">
             {items.map((item, idx) => (
               <div key={item.id} className="relative flex-shrink-0 group">
                 <button
