@@ -328,6 +328,9 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
           if (currentIndex === -1) setCurrentIndex(0);
           return next;
         });
+        // Reset pan/zoom để ảnh mới luôn hiện giữa màn hình
+        setOffset({ x: 0, y: 0 });
+        setZoom(1);
       };
       reader.readAsDataURL(file as Blob);
     });
