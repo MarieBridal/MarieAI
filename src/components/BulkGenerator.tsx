@@ -32,26 +32,33 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-// Tạo thumbnail nhỏ từ File (~300px) để hiển thị grid, tiết kiệm RAM
-function createThumbnail(file: File, maxSize: number = 300): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let w = img.width, h = img.height;
-      if (w > h) { if (w > maxSize) { h = (h * maxSize) / w; w = maxSize; } }
-      else { if (h > maxSize) { w = (w * maxSize) / h; h = maxSize; } }
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d')!;
-      ctx.drawImage(img, 0, 0, w, h);
-      URL.revokeObjectURL(url);
-      resolve(canvas.toDataURL('image/jpeg', 0.6));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Lỗi tạo thumbnail')); };
-    img.src = url;
-  });
+// Tạo thumbnail nhỏ bằng createImageBitmap (KHÔNG chặn main thread)
+async function createThumbnail(file: File, maxSize: number = 200): Promise<string> {
+  try {
+    // createImageBitmap decode ảnh off main thread - không gây lag
+    const bitmap = await createImageBitmap(file, {
+      resizeWidth: maxSize,
+      resizeHeight: maxSize,
+      resizeQuality: 'low'
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.5);
+  } catch {
+    // Fallback nếu browser không hỗ trợ resize option
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(maxSize / bitmap.width, maxSize / bitmap.height, 1);
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    return canvas.toDataURL('image/jpeg', 0.5);
+  }
 }
 
 export const BulkGenerator: React.FC = () => {
@@ -218,8 +225,8 @@ export const BulkGenerator: React.FC = () => {
       const file = imageFiles[i];
       setUploadProgress(prev => ({ ...prev, current: i + 1 }));
       try {
-        // Yield cho browser render giữa mỗi file
-        await new Promise(r => setTimeout(r, 0));
+        // Yield cho browser render giữa mỗi file (20ms đủ cho 1 frame)
+        await new Promise(r => setTimeout(r, 20));
         const thumbnail = await createThumbnail(file);
         const blobUrl = URL.createObjectURL(file);
         const newItem: BulkItem = {
