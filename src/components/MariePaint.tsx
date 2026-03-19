@@ -124,6 +124,76 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); };
   }, []);
 
+  // ─── IndexedDB persistence: auto-save items across F5 refresh ───────────
+  const DB_NAME = 'MarieAI';
+  const STORE = 'paintItems';
+
+  const openDB = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+
+  // Restore on mount
+  useEffect(() => {
+    openDB().then(db => {
+      const tx = db.transaction(STORE, 'readonly');
+      const store = tx.objectStore(STORE);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const saved = req.result as any[];
+        if (saved && saved.length > 0) {
+          const restored: PaintItem[] = saved.map(s => ({
+            id: s.id,
+            originalName: s.originalName || 'MARIE',
+            original: s.original,
+            results: [],
+            rawResults: [],
+            selectedResultIndex: -1,
+            undoStack: [],
+            redoStack: [],
+            mask: s.mask || null,
+            prompt: s.prompt || '',
+            featherAmount: s.featherAmount || 15,
+            blendOpacity: s.blendOpacity || 100,
+            maskDilation: s.maskDilation || 20,
+          }));
+          setItems(restored);
+          setCurrentIndex(0);
+        }
+      };
+    }).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save on items change (debounced 800ms)
+  useEffect(() => {
+    if (items.length === 0) return;
+    const timer = setTimeout(() => {
+      openDB().then(db => {
+        const tx = db.transaction(STORE, 'readwrite');
+        const store = tx.objectStore(STORE);
+        store.clear();
+        items.forEach(item => {
+          store.put({
+            id: item.id,
+            originalName: item.originalName,
+            original: item.original,
+            mask: item.mask,
+            prompt: item.prompt,
+            featherAmount: item.featherAmount,
+            blendOpacity: item.blendOpacity,
+            maskDilation: item.maskDilation,
+          });
+        });
+      }).catch(() => {});
+    }, 800);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+
+
   const performBlending = useCallback(async (item: PaintItem, resultIdx: number): Promise<string> => {
     if (resultIdx === -1 || !item.rawResults[resultIdx]) return item.original;
 
