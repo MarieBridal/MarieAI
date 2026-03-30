@@ -43,12 +43,18 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
   const [items, setItems] = useState<PaintItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(-1);
   const [defaultPrompt, setDefaultPrompt] = useState("");
-  const [defaultDilation, setDefaultDilation] = useState(20);
-  const [defaultFeather, setDefaultFeather] = useState(15);
+  const [defaultDilation, setDefaultDilation] = useState(8);
+  const [defaultFeather, setDefaultFeather] = useState(5);
   const [defaultOpacity, setDefaultOpacity] = useState(100);
 
   const [refImage, setRefImage] = useState<string | null>(null);
   const [bgImage, setBgImage] = useState<string | null>(null);
+  const [bgMask, setBgMask] = useState<string | null>(null);
+  const [bgMaskEditorOpen, setBgMaskEditorOpen] = useState(false);
+  const [bgMaskMode, setBgMaskMode] = useState<'full' | 'select'>('full');
+  const [bgEditorBrushSize, setBgEditorBrushSize] = useState(30);
+  const [bgEditorIsEraser, setBgEditorIsEraser] = useState(false);
+  const [bgEditorIsDrawing, setBgEditorIsDrawing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [quality, setQuality] = useState<ImageQuality>('4K');
   const [numVariants, setNumVariants] = useState<number>(1);
@@ -79,6 +85,9 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
+  const bgDisplayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const bgMaskCanvasRef = useRef<HTMLCanvasElement>(null);
+  const bgImageRef = useRef<HTMLImageElement>(null);
 
   const activeItem = currentIndex >= 0 ? items[currentIndex] : null;
 
@@ -206,10 +215,15 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
 
     const finalCanvas = document.createElement('canvas'); finalCanvas.width = targetW; finalCanvas.height = targetH;
     const fctx = finalCanvas.getContext('2d')!;
+    // Tắt smoothing để giữ pixel chính xác 100% — tránh browser làm mờ ảnh gốc
+    fctx.imageSmoothingEnabled = false;
     fctx.drawImage(originalImg, 0, 0);
 
     const aiLayer = document.createElement('canvas'); aiLayer.width = targetW; aiLayer.height = targetH;
     const actx = aiLayer.getContext('2d')!;
+    // Bật high quality smoothing khi scale AI result (AI result thường nhỏ hơn ảnh gốc)
+    actx.imageSmoothingEnabled = true;
+    actx.imageSmoothingQuality = 'high';
 
     const aiSize = aiImg.width;
     let renderW, renderH, offsetX, offsetY;
@@ -226,6 +240,42 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       actx.globalAlpha = Math.min(1, remainingAlpha);
       actx.drawImage(aiImg, offsetX, offsetY, renderW, renderH, 0, 0, targetW, targetH);
       remainingAlpha -= 1;
+    }
+
+    // ── Unsharp Mask: chỉ áp lên aiLayer (vùng AI), KHÔNG ảnh hưởng ảnh gốc ──
+    // Kỹ thuật: blur bản copy → lấy hiệu → cộng lại để tăng nét
+    // Toàn bộ sharpening bị cắt bởi mask ở bước dưới → an toàn cho vùng rộng
+    const sharpBlurCanvas = document.createElement('canvas');
+    sharpBlurCanvas.width = targetW;
+    sharpBlurCanvas.height = targetH;
+    const sbctx = sharpBlurCanvas.getContext('2d')!;
+    // Pass 1: tạo bản mờ (Gaussian blur nhẹ 1.2px)
+    sbctx.filter = 'blur(1.2px)';
+    sbctx.drawImage(aiLayer, 0, 0);
+    sbctx.filter = 'none';
+    // Pass 2: pixel-level unsharp mask (chỉ áp nếu ảnh không quá lớn để tránh lag)
+    const pixelCount = targetW * targetH;
+    if (pixelCount <= 16_000_000) { // ≤ 4000×4000px = làm pixel unsharp
+      const origData = actx.getImageData(0, 0, targetW, targetH);
+      const blurData = sbctx.getImageData(0, 0, targetW, targetH);
+      const sharpAmount = 0.55; // cường độ sharpen (0=tắt, 1=mạnh)
+      const d = origData.data;
+      const b = blurData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        d[i]   = Math.min(255, Math.max(0, d[i]   + (d[i]   - b[i])   * sharpAmount));
+        d[i+1] = Math.min(255, Math.max(0, d[i+1] + (d[i+1] - b[i+1]) * sharpAmount));
+        d[i+2] = Math.min(255, Math.max(0, d[i+2] + (d[i+2] - b[i+2]) * sharpAmount));
+      }
+      actx.putImageData(origData, 0, 0);
+    } else {
+      // Ảnh rất lớn (>16MP): dùng contrast boost thay pixel loop để không lag
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = targetW; tempCanvas.height = targetH;
+      const tctx = tempCanvas.getContext('2d')!;
+      tctx.filter = 'contrast(1.08) saturate(1.04)';
+      tctx.drawImage(aiLayer, 0, 0);
+      actx.clearRect(0, 0, targetW, targetH);
+      actx.drawImage(tempCanvas, 0, 0);
     }
 
     if (item.mask) {
@@ -561,7 +611,8 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       const res = await gemini.processImage(
         mode === 'upscale' ? "Quantum Optical Super-Resolution reconstruction." : (activeItem?.prompt || "Ghép nối chủ thể tự nhiên nhất có thể. Giữ nguyên 100% pixel của người thật. Đổ bóng cast shadows và chỉnh ánh sáng ambiant khớp với nền."),
         item.original, quality, refImage || undefined, `paint_${item.id}_${Date.now()}`,
-        false, noiseAmount, item.mask, noiseProfile, '1:1', quantumIntensity, bgImage
+        false, noiseAmount, item.mask, noiseProfile, '1:1', quantumIntensity, bgImage,
+        (bgMaskMode === 'select' ? bgMask : null)
       );
 
       if (res) {
@@ -721,8 +772,12 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
 
   const downloadSingle = async (item: PaintItem, format: 'psd' | 'png') => {
     if (format === 'png') {
+      // Fallback về ảnh gốc nếu chưa có AI result
+      const resultSrc = item.results.length > 0
+        ? item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0]
+        : item.original;
       const link = document.createElement('a');
-      link.href = item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0];
+      link.href = resultSrc;
       link.download = `${item.originalName || 'MARIE_' + item.id}.png`;
       document.body.appendChild(link);
       link.click();
@@ -791,13 +846,17 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
   };
 
   const downloadAll = async (format: 'psd' | 'png') => {
-    const completedItems = items.filter(it => it.results.length > 0);
-    if (completedItems.length === 0) return;
+    // Bao gồm TẤT CẢ ảnh — cả chưa AI (fallback về ảnh gốc) và đã AI
+    if (items.length === 0) return;
 
     if (format === 'png') {
-      for (const item of completedItems) {
+      for (const item of items) {
+        // Ưu tiên AI result, fallback về ảnh gốc nếu chưa xử lý
+        const resultSrc = item.results.length > 0
+          ? item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0]
+          : item.original;
         const link = document.createElement('a');
-        link.href = item.results[item.selectedResultIndex !== -1 ? item.selectedResultIndex : 0];
+        link.href = resultSrc;
         link.download = `${item.originalName || 'MARIE_' + item.id}.png`;
         document.body.appendChild(link);
         link.click();
@@ -806,6 +865,8 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
       }
       return;
     }
+    // Với PSD: cũng bao gồm tất cả, dùng item.original nếu chưa có AI result
+    const completedItems = items;
 
     let successCount = 0;
 
@@ -882,6 +943,92 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
     } catch (err: any) { toast.error(`LỖI: ${err.message}`); } finally { setLoading(false); }
   };
 
+  // ── BG Mask Editor helpers ────────────────────────────────────────────────
+  const setupBgCanvas = () => {
+    const img = bgImageRef.current;
+    const dc = bgDisplayCanvasRef.current;
+    const mc = bgMaskCanvasRef.current;
+    if (!img || !dc || !mc) return;
+    dc.width = img.clientWidth;
+    dc.height = img.clientHeight;
+    mc.width = img.naturalWidth;
+    mc.height = img.naturalHeight;
+    const dctx = dc.getContext('2d')!;
+    const mctx = mc.getContext('2d')!;
+    dctx.lineCap = 'round';
+    mctx.lineCap = 'round';
+    // Restore painted mask if any
+    if (bgMask) {
+      const saved = new Image();
+      saved.onload = () => {
+        mctx.drawImage(saved, 0, 0);
+        dctx.drawImage(saved, 0, 0, dc.width, dc.height);
+      };
+      saved.src = bgMask;
+    }
+  };
+
+  const bgEditorStartDraw = (e: React.PointerEvent) => {
+    setBgEditorIsDrawing(true);
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    const dc = bgDisplayCanvasRef.current!;
+    const mc = bgMaskCanvasRef.current!;
+    const rect = dc.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width;
+    const ny = (e.clientY - rect.top) / rect.height;
+    const op = bgEditorIsEraser ? 'destination-out' : 'source-over';
+    const color = '#FF0000';
+    const bsD = bgEditorBrushSize * (dc.width / rect.width);
+    const bsM = bgEditorBrushSize * (mc.width / rect.width);
+    [dc.getContext('2d')!, mc.getContext('2d')!].forEach((ctx, i) => {
+      const bs = i === 0 ? bsD : bsM;
+      const x = nx * (i === 0 ? dc.width : mc.width);
+      const y = ny * (i === 0 ? dc.height : mc.height);
+      ctx.globalCompositeOperation = op;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = bs;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y); ctx.stroke();
+    });
+  };
+
+  const bgEditorDraw = (e: React.PointerEvent) => {
+    if (!bgEditorIsDrawing) return;
+    const dc = bgDisplayCanvasRef.current!;
+    const mc = bgMaskCanvasRef.current!;
+    const rect = dc.getBoundingClientRect();
+    const nx = (e.clientX - rect.left) / rect.width;
+    const ny = (e.clientY - rect.top) / rect.height;
+    const op = bgEditorIsEraser ? 'destination-out' : 'source-over';
+    [dc.getContext('2d')!, mc.getContext('2d')!].forEach((ctx, i) => {
+      const bsD = bgEditorBrushSize * (dc.width / rect.width);
+      const bsM = bgEditorBrushSize * (mc.width / rect.width);
+      const bs = i === 0 ? bsD : bsM;
+      const x = nx * (i === 0 ? dc.width : mc.width);
+      const y = ny * (i === 0 ? dc.height : mc.height);
+      ctx.globalCompositeOperation = op;
+      ctx.lineWidth = bs;
+      ctx.lineTo(x, y); ctx.stroke();
+    });
+  };
+
+  const bgEditorStopDraw = (e: React.PointerEvent) => {
+    if (!bgEditorIsDrawing) return;
+    setBgEditorIsDrawing(false);
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    // Save mask from hidden canvas
+    const mc = bgMaskCanvasRef.current;
+    if (mc) setBgMask(mc.toDataURL('image/png'));
+  };
+
+  const clearBgMask = () => {
+    setBgMask(null);
+    const dc = bgDisplayCanvasRef.current;
+    const mc = bgMaskCanvasRef.current;
+    if (dc) dc.getContext('2d')!.clearRect(0, 0, dc.width, dc.height);
+    if (mc) mc.getContext('2d')!.clearRect(0, 0, mc.width, mc.height);
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-8 p-6 animate-fadeIn max-w-[1800px] mx-auto h-full min-h-[calc(100vh-140px)] overflow-hidden">
       {canvasActive && isHovering && activeItem?.selectedResultIndex === -1 && !loading && !isSpacePressed && typeof document !== 'undefined' && createPortal(
@@ -911,11 +1058,26 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={() => bgFileInputRef.current?.click()}
-              className="py-4 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-1.5 bg-slate-900/40 border-slate-700 hover:border-emerald-500 hover:bg-emerald-500/5 transition-all group"
+              onClick={() => {
+                if (bgImage) {
+                  setBgMaskEditorOpen(true);
+                } else {
+                  bgFileInputRef.current?.click();
+                }
+              }}
+              className="py-4 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center gap-1.5 bg-slate-900/40 border-slate-700 hover:border-emerald-500 hover:bg-emerald-500/5 transition-all group relative"
             >
-              {bgImage ? <img src={bgImage} className="w-8 h-8 rounded-lg object-cover shadow-lg" /> : <Layers className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />}
-              <span className="text-[7px] text-slate-500 group-hover:text-emerald-400 font-black uppercase tracking-widest transition-colors truncate w-full px-1 text-center leading-tight">THÊM<br />NỀN</span>
+              {bgImage ? (
+                <div className="relative">
+                  <img src={bgImage} className="w-8 h-8 rounded-lg object-cover shadow-lg" />
+                  {bgMask && bgMaskMode === 'select' && (
+                    <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-500 border border-slate-900 shadow" />
+                  )}
+                </div>
+              ) : <Layers className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />}
+              <span className="text-[7px] text-slate-500 group-hover:text-emerald-400 font-black uppercase tracking-widest transition-colors truncate w-full px-1 text-center leading-tight">
+                {bgImage ? 'SỬA NỀN' : 'THÊM'}<br />{bgImage ? '' : 'NỀN'}
+              </span>
             </motion.button>
             <motion.button
               whileHover={{ scale: 1.02 }}
@@ -944,6 +1106,9 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
               const reader = new FileReader();
               reader.onload = ev => {
                 setBgImage(ev.target?.result as string);
+                setBgMask(null);
+                setBgMaskMode('full');
+                setBgMaskEditorOpen(true);
                 const compositingPrompt = 'Ghép nối chủ thể tự nhiên nhất có thể. Giữ nguyên 100% pixel của người thật. Đổ bóng cast shadows và chỉnh ánh sáng ambiant khớp với nền.';
                 if (activeItem && (!activeItem.prompt || activeItem.prompt.trim() === '')) {
                   setItems(prev => prev.map(it => it.id === activeItem.id ? { ...it, prompt: compositingPrompt } : it));
@@ -954,6 +1119,156 @@ export const MariePaint: React.FC<MariePaintProps> = ({ title = "MARIE PIXEL-LOC
               reader.readAsDataURL(file as Blob);
             }
           }} className="hidden" accept="image/*" />
+
+          {/* ── BG Mask Editor Modal ──────────────────────────────── */}
+          <AnimatePresence>
+            {bgMaskEditorOpen && bgImage && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-xl p-4"
+              >
+                <motion.div
+                  initial={{ scale: 0.92, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.92, y: 20 }}
+                  className="bg-[#0d1117] border border-slate-700 rounded-3xl shadow-2xl flex flex-col gap-5 p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto"
+                >
+                  {/* Header */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-base font-black text-emerald-400 uppercase tracking-tight">🎯 Khoanh Vùng Từ Nền</h3>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Tô đỏ vùng muốn trích ra từ ảnh nền rồi ghép vào hình chính</p>
+                    </div>
+                    <button onClick={() => setBgMaskEditorOpen(false)} className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 hover:text-white hover:bg-red-500/30 transition-all">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Mode Toggle */}
+                  <div className="flex gap-2 p-1 bg-slate-900 rounded-2xl border border-slate-800">
+                    <button
+                      onClick={() => { setBgMaskMode('full'); clearBgMask(); }}
+                      className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        bgMaskMode === 'full' ? 'bg-emerald-600 text-white shadow' : 'text-slate-500 hover:text-slate-200'
+                      }`}
+                    >
+                      🌍 Dùng toàn bộ nền
+                    </button>
+                    <button
+                      onClick={() => setBgMaskMode('select')}
+                      className={`flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        bgMaskMode === 'select' ? 'bg-red-600 text-white shadow' : 'text-slate-500 hover:text-slate-200'
+                      }`}
+                    >
+                      🎯 Khoanh vùng chọn lọc
+                    </button>
+                  </div>
+
+                  {/* BG Canvas editor — only shown in select mode */}
+                  {bgMaskMode === 'select' && (
+                    <div className="flex flex-col gap-4">
+                      <p className="text-[10px] text-amber-400 font-black uppercase">🖌️ Tô màu đỏ lên vùng muốn lấy từ ảnh nền</p>
+
+                      {/* Canvas Area */}
+                      <div
+                        className="relative rounded-2xl overflow-hidden bg-black border border-slate-700 shadow-inner cursor-crosshair"
+                        style={{ maxHeight: '55vh', display: 'flex', justifyContent: 'center' }}
+                      >
+                        <img
+                          ref={bgImageRef}
+                          src={bgImage}
+                          onLoad={setupBgCanvas}
+                          className="max-h-[55vh] w-auto block select-none pointer-events-none"
+                          style={{ opacity: 0.85 }}
+                        />
+                        <canvas
+                          ref={bgDisplayCanvasRef}
+                          onPointerDown={bgEditorStartDraw}
+                          onPointerMove={bgEditorDraw}
+                          onPointerUp={bgEditorStopDraw}
+                          className="absolute inset-0 w-full h-full touch-none"
+                          style={{ opacity: 0.55 }}
+                        />
+                        <canvas ref={bgMaskCanvasRef} className="hidden" />
+                      </div>
+
+                      {/* Brush Controls */}
+                      <div className="flex items-center gap-4 p-3 bg-slate-900/80 rounded-2xl border border-slate-800">
+                        {/* Brush/Eraser toggle */}
+                        <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-700">
+                          <button
+                            onClick={() => setBgEditorIsEraser(false)}
+                            className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
+                              !bgEditorIsEraser ? 'bg-red-600 text-white' : 'text-slate-500'
+                            }`}
+                          >
+                            Cọ Vẽ
+                          </button>
+                          <button
+                            onClick={() => setBgEditorIsEraser(true)}
+                            className={`px-4 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all ${
+                              bgEditorIsEraser ? 'bg-slate-600 text-white' : 'text-slate-500'
+                            }`}
+                          >
+                            Tẩy
+                          </button>
+                        </div>
+
+                        {/* Brush size */}
+                        <div className="flex-1 flex items-center gap-3">
+                          <span className="text-[9px] font-black text-slate-400 uppercase whitespace-nowrap">Size: {bgEditorBrushSize}px</span>
+                          <input
+                            type="range" min="5" max="150" value={bgEditorBrushSize}
+                            onChange={e => setBgEditorBrushSize(parseInt(e.target.value))}
+                            className="flex-1 h-1.5 bg-slate-800 rounded-lg accent-red-500"
+                          />
+                        </div>
+
+                        {/* Clear */}
+                        <button
+                          onClick={clearBgMask}
+                          className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-[9px] font-black text-red-400 hover:bg-red-500/20 transition-all uppercase flex items-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Xóa Mask
+                        </button>
+                      </div>
+
+                      {/* Mask preview indicator */}
+                      {bgMask && (
+                        <div className="flex items-center gap-2 text-[9px] font-black text-emerald-400 uppercase">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                          Đã lưu vùng khoanh — AI sẽ chỉ lấy phần đỏ từ ảnh nền
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Footer actions */}
+                  <div className="flex gap-3 pt-2 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        setBgImage(null);
+                        setBgMask(null);
+                        setBgMaskMode('full');
+                        setBgMaskEditorOpen(false);
+                      }}
+                      className="flex-1 py-3 bg-red-900/20 border border-red-500/30 rounded-xl text-[10px] font-black text-red-400 uppercase hover:bg-red-500/20 transition-all"
+                    >
+                      Xóa ảnh nền
+                    </button>
+                    <button
+                      onClick={() => setBgMaskEditorOpen(false)}
+                      className="flex-[2] py-3 bg-emerald-600 rounded-xl text-[10px] font-black text-white uppercase hover:bg-emerald-500 transition-all shadow-lg"
+                    >
+                      ✅ Xác nhận &amp; Đóng
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <input type="file" ref={refFileInputRef} onChange={e => {
             const file = e.target.files?.[0];
             if (file) {

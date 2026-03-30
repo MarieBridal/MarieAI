@@ -310,7 +310,8 @@ export class GeminiService {
     profile: NoiseProfile = 'digital',
     aspectRatio: string = '1:1',
     intensity: number = 100,
-    bgB64?: string | null
+    bgB64?: string | null,
+    bgMaskB64?: string | null
   ): Promise<string | undefined> {
     const ai = this.getClient();
     const dynamicSeed = generateDynamicSeed(prompt, imageSalt);
@@ -326,7 +327,20 @@ export class GeminiService {
 
     MISSION: Ensure the target object is rendered fully without any cropping at the mask edges.`;
 
-    if (bgB64) {
+    if (bgB64 && bgMaskB64) {
+      // Mode: Extract specific element from BG → composite into main image
+      systemInstruction += `\n\n    SPECIAL MISSION (BG ELEMENT EXTRACTION & COMPOSITING):
+      You have two images: SOURCE_TEMPLATE (the main scene you must keep intact) and BG_SOURCE (a separate image containing an element to extract).
+      The BG_SELECTION_MASK highlights in RED the ONLY region of BG_SOURCE you are allowed to take.
+
+      CRITICAL RULES:
+      - [EXTRACT ONLY MASKED ELEMENT]: Look at BG_SELECTION_MASK. Only the red-painted area of BG_SOURCE should be extracted and composited. Ignore everything else in BG_SOURCE.
+      - [PRESERVE SOURCE_TEMPLATE 100%]: Do NOT change, redraw, or alter any pixel of SOURCE_TEMPLATE that is not directly affected by the compositing blend. The people, faces, clothing, and background in SOURCE_TEMPLATE must remain pixel-perfect.
+      - [NATURAL BLENDING]: The extracted element from BG_SOURCE must be placed into SOURCE_TEMPLATE with physically correct lighting, shadows, perspective distortion, and scale — as if it was always there.
+      - [ZERO HALLUCINATION]: Do not add any element not already present in either image.
+      - OVERALL GOAL: Seamlessly add only the selected element from BG_SOURCE into SOURCE_TEMPLATE like a professional photomontage.`;
+    } else if (bgB64) {
+      // Mode: Full background swap — place subject onto entire BG
       systemInstruction += `\n\n    SPECIAL MISSION (BACKGROUND COMPOSITING): 
       You MUST extract the main subject from the SOURCE_TEMPLATE and flawlessly composite it onto the BACKGROUND_ENVIRONMENT.
       
@@ -338,10 +352,19 @@ export class GeminiService {
     }
 
     const parts: any[] = [];
-    if (bgB64) {
+
+    if (bgB64 && bgMaskB64) {
+      // Element extraction mode: send BG_SOURCE + BG_SELECTION_MASK first, then main image
+      const { data: bgData } = await prepareImageForAi(bgB64, 1536, 0.8);
+      parts.push({ text: "BG_SOURCE:" }, { inlineData: { data: bgData, mimeType: 'image/jpeg' } });
+      const { data: bgMaskData } = await prepareImageForAi(bgMaskB64, 1536, 0.8);
+      parts.push({ text: "BG_SELECTION_MASK (RED = extract this region only):" }, { inlineData: { data: bgMaskData, mimeType: 'image/jpeg' } });
+    } else if (bgB64) {
+      // Full compositing mode: send background as environment first
       const { data: bgData } = await prepareImageForAi(bgB64, 1536, 0.8);
       parts.push({ text: "BACKGROUND_ENVIRONMENT:" }, { inlineData: { data: bgData, mimeType: 'image/jpeg' } });
     }
+
     if (referenceImageB64) {
       const { data: refData } = await prepareImageForAi(referenceImageB64, 1024, 0.7);
       parts.push({ text: "STYLE_DNA_REF:" }, { inlineData: { data: refData, mimeType: 'image/jpeg' } });
